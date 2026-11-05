@@ -88,4 +88,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 # Web container entrypoint. The worker container overrides this in compose with
 # `python3 worker.py`.
-CMD ["gunicorn","--bind","0.0.0.0:5008","--workers","2","--threads","4","app:app"]
+CMD ["python3","-m","gunicorn","--bind","0.0.0.0:5008","--workers","2","--threads","4","app:app"]
