@@ -157,26 +157,34 @@ def test_worker_concurrency_is_one(compose):
         'genome-worker must not set a scale > 1'
 
 
-def test_browser_and_worker_build_genome_and_mount_data(compose):
+def test_browser_and_worker_use_published_image_and_mount_data(compose):
     """
-    Both genome services build ./genome and mount genome-data:/genome (13.16).
+    Both genome services use the published image and mount genome-data (13.16).
 
-    The worker must be the same image as the browser (so the bundled toolchain
-    is present) and share the one genome-data volume that holds the SQLite
-    queue, stored BigWigs, and the conversion scratch area.
+    The genome browser ships as the published lab-suite-genome image, pinned
+    with SUITE_VERSION like the other suite services; the worker must use the
+    SAME image (so the bundled conversion toolchain is present) and share the
+    one genome-data volume that holds the SQLite queue, stored BigWigs, and the
+    conversion scratch area. (The docker-compose.local.yml overlay builds this
+    image from ./genome before it is published.)
     """
     services = compose['services']
+    images = {}
     for name in ('genome-browser', 'genome-worker'):
         service = services[name]
-        build = service['build']
-        build_context = build if isinstance(build, str) else build.get('context')
-        assert build_context == './genome', \
-            f'{name} should build ./genome, got {build!r}'
+        image = service['image']
+        assert 'lab-suite-genome' in image, \
+            f'{name} should use the lab-suite-genome image, got {image!r}'
+        images[name] = image
 
         mounts = service['volumes']
         assert any(
             str(m).startswith('genome-data:/genome') for m in mounts), \
             f'{name} should mount genome-data:/genome, got {mounts!r}'
+
+    # Worker and browser must be the SAME image (the worker needs the toolchain).
+    assert images['genome-browser'] == images['genome-worker'], \
+        f'worker and browser must share one image, got {images!r}'
 
     # The shared named volume must be declared.
     assert 'genome-data' in compose['volumes'], \

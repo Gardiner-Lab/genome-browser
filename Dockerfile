@@ -22,23 +22,35 @@ FROM debian:bookworm-slim
 # module imports `requests` (e.g. notebook.py export to the Lab Notebook).
 #
 # Supply chain: the UCSC static binaries are verified against pinned SHA-256s.
-# The two UCSC static binaries are fetched at build time from the canonical
-# UCSC download host and checked against the SHA-256 values pinned in the ARGs
-# below (captured 2026-11-05); the sha256sum -c check fails the build on any
-# mismatch, so the download cannot be silently substituted. UCSC periodically
-# rebuilds these binaries; if a future build fails the check, re-fetch each,
-# confirm its provenance, run `sha256sum <file>`, and update the matching ARG.
-ARG UCSC_BASE_URL=https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64
-ARG UCSC_WIGTOBIGWIG_SHA256=5b9eccc4929b339be26bb69bce27de63070195cb0a431b410627c0bed8ab4f15
-ARG UCSC_BEDGRAPHTOBIGWIG_SHA256=fe9ed8ed858731d22d9a3cefa99d192f51bff1496693599b2f8054fa350adb48
+# They are fetched at build time from the canonical UCSC download host, per
+# architecture (linux.x86_64 for amd64, linux.aarch64 for arm64), and each is
+# checked against the SHA-256 pinned below (captured 2026-11-05). The
+# ``sha256sum -c`` check fails the build on any mismatch, so a download cannot
+# be silently substituted. UCSC periodically rebuilds these binaries; if a
+# future build fails the check, re-fetch each for its architecture, confirm its
+# provenance, run ``sha256sum <file>``, and update the matching ARG below.
+#
+# TARGETARCH is provided by BuildKit (amd64 / arm64); the per-arch URL and
+# checksums are selected from it at build time.
+ARG TARGETARCH
+ARG UCSC_WIGTOBIGWIG_SHA256_amd64=5b9eccc4929b339be26bb69bce27de63070195cb0a431b410627c0bed8ab4f15
+ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_amd64=fe9ed8ed858731d22d9a3cefa99d192f51bff1496693599b2f8054fa350adb48
+ARG UCSC_WIGTOBIGWIG_SHA256_arm64=fb347a6b90a7d4cbae4ac035a3c35c1700589e1a69f9553468d29754efbdacbf
+ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_arm64=3c61e496f446d9965f4b945ca3c5ebfa1a669e920635fbb89a2b705c8a50f5d6
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-flask python3-gunicorn python3-requests \
       samtools bedtools python3-pybigwig python3-deeptools ca-certificates wget \
- && wget -O /usr/local/bin/wigToBigWig "${UCSC_BASE_URL}/wigToBigWig" \
- && wget -O /usr/local/bin/bedGraphToBigWig "${UCSC_BASE_URL}/bedGraphToBigWig" \
- && echo "${UCSC_WIGTOBIGWIG_SHA256}  /usr/local/bin/wigToBigWig"         | sha256sum -c - \
- && echo "${UCSC_BEDGRAPHTOBIGWIG_SHA256}  /usr/local/bin/bedGraphToBigWig" | sha256sum -c - \
+ && case "$TARGETARCH" in \
+      amd64) ucsc_dir=linux.x86_64;  wig_sha="$UCSC_WIGTOBIGWIG_SHA256_amd64";  bgr_sha="$UCSC_BEDGRAPHTOBIGWIG_SHA256_amd64" ;; \
+      arm64) ucsc_dir=linux.aarch64; wig_sha="$UCSC_WIGTOBIGWIG_SHA256_arm64";  bgr_sha="$UCSC_BEDGRAPHTOBIGWIG_SHA256_arm64" ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && base="https://hgdownload.soe.ucsc.edu/admin/exe/$ucsc_dir" \
+ && wget -O /usr/local/bin/wigToBigWig      "$base/wigToBigWig" \
+ && wget -O /usr/local/bin/bedGraphToBigWig "$base/bedGraphToBigWig" \
+ && echo "$wig_sha  /usr/local/bin/wigToBigWig"      | sha256sum -c - \
+ && echo "$bgr_sha  /usr/local/bin/bedGraphToBigWig" | sha256sum -c - \
  && chmod +x /usr/local/bin/wigToBigWig /usr/local/bin/bedGraphToBigWig \
  && rm -rf /var/lib/apt/lists/*
 
