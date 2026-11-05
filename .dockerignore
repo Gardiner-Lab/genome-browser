@@ -1,0 +1,24 @@
+# Build context exclusions for the genome-browser image.
+# `COPY . /srv/genome` in the Dockerfile relies on these to avoid shipping
+# caches, tests, and local cruft into the image.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests are not needed in the runtime image (integration tests run against
+# the built image from the host, not from inside it).
+test_*.py
+*_test.py
+
+# Local / editor / VCS noise
+.git/
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store
+*.swp

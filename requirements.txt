@@ -1,0 +1,15 @@
+# Genome Browser module dependencies.
+#
+# The Dockerfile installs flask, gunicorn and pybigwig from Debian packages
+# (python3-flask, python3-gunicorn, python3-pybigwig) alongside the conversion
+# toolchain; this file pins them for local development and the test runner, and
+# is the single list of what the module imports.
+flask==3.0.3
+gunicorn==22.0.0
+pyBigWig==0.3.22
+requests==2.32.3
+
+# Testing: unit tests and Hypothesis property-based tests (per the design's
+# Testing Strategy).
+pytest==8.3.3
+hypothesis==6.112.1
