@@ -427,11 +427,10 @@ def _browser_html(static_prefix: str) -> str:
 
     References the vendored ``{static_prefix}/igv.min.js`` (browser-visible
     ``/genome/static/igv.min.js``) rather than a CDN, so the suite has no
-    outbound dependency at runtime. It mounts an IGV container and, once the
-    vendored script is present, boots a browser; a small inline note explains
-    that ``igv.min.js`` must be vendored into ``static/`` when the page is built
-    (the static README records the same). The data the browser loads comes
-    through the authenticated API endpoints under the same ``/genome`` mount.
+    outbound dependency at runtime. It mounts an IGV container and boots a
+    browser on it; if that script does not load, a small inline note says so
+    instead of leaving an empty page. The data the browser loads comes through
+    the authenticated API endpoints under the same ``/genome`` mount.
     """
     igv_src = f'{static_prefix}/igv.min.js'
     return f"""<!doctype html>
@@ -464,10 +463,10 @@ def _browser_html(static_prefix: str) -> str:
   </noscript>
 
   <div id="vendor-note" class="vendor-note" hidden>
-    The IGV viewer (<code>igv.min.js</code>) has not been vendored into
-    <code>static/</code> yet. Add the built <code>igv.min.js</code> there to
-    enable the interactive browser; the API endpoints under
-    <code>/genome/api/</code> work regardless.
+    The IGV viewer (<code>igv.min.js</code>) did not load, so the interactive
+    browser cannot start. It is served from <code>/genome/static/</code> and
+    never fetched from the internet, so this means the file is missing from the
+    image. The API endpoints under <code>/genome/api/</code> work regardless.
   </div>
 
   <div id="igv-container"

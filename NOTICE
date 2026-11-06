@@ -1,0 +1,37 @@
+Genome Browser
+Copyright (C) 2026 Gardiner Lab, Utrecht University
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 or (at your option) any later version. See LICENSE.
+
+It includes, unchanged, in static:
+
+igv.js 3.8.10 (the interactive genome browser)
+    https://github.com/igvteam/igv.js
+    Copyright (c) 2014-2025 Broad Institute of MIT and Harvard,
+    Regents of the University of California
+    MIT licence: static/igv.js-LICENSE.txt
+
+    The igv.min.js bundle carries these libraries within it, each keeping its
+    own notice in the file:
+
+    DOMPurify 3.4.16 - (c) Cure53 and other contributors
+        Apache licence 2.0 and Mozilla Public License 2.0
+    vanilla-picker 2.12.1 and 2.12.3 - Copyright 2017-2024 Andreas Borgen,
+        Adam Brooks - ISC licence
+    regenerator-runtime - Copyright (c) 2014-present, Facebook, Inc.
+        MIT licence
+    canvas2svg - Copyright (c) 2014 Gliffy Inc., author Kerry Liu
+        MIT licence
+    portions adapted from GMOD two-bit.js - Copyright (c) 2017 Robert Buels
+
+The conversion toolchain is not included here: it is installed into the image
+from Debian packages and from UCSC's published binaries, each under its own
+licence. See the Dockerfile.
+
+If a view from this tool goes into a paper, cite igv.js:
+
+    James T Robinson, Helga Thorvaldsdottir, Douglass Turner, Jill P Mesirov,
+    igv.js: an embeddable JavaScript implementation of the Integrative Genomics
+    Viewer (IGV), Bioinformatics. https://doi.org/10.1093/bioinformatics/btac830

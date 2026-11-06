@@ -47,6 +47,19 @@ toolchain, and there is exactly one of it.
 Inside the container the health route is `/health`, **not** `/genome/health`: the proxy strips the
 prefix. Through the suite it is at `/genome/health`.
 
+## The viewer, and citing it
+
+The interactive browser is [igv.js](https://github.com/igvteam/igv.js) 3.8.10, vendored unchanged
+into `static/igv.min.js` rather than loaded from a CDN, so the suite has no outbound dependency at
+run time. It is MIT licensed; the notice travels with it in `static/igv.js-LICENSE.txt`, and
+`NOTICE` records it along with the libraries its bundle carries.
+
+**If a view from here goes into a paper, cite igv.js:** James T Robinson, Helga Thorvaldsdóttir,
+Douglass Turner, Jill P Mesirov, "igv.js: an embeddable JavaScript implementation of the Integrative
+Genomics Viewer (IGV)", *Bioinformatics*, [doi:10.1093/bioinformatics/btac830][igvjs].
+
+[igvjs]: https://doi.org/10.1093/bioinformatics/btac830
+
 ## The conversion toolchain
 
 The image is Debian-based rather than Alpine because the toolchain is not reliably packaged for

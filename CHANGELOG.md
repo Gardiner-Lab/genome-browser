@@ -9,6 +9,26 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+### Added
+- **The interactive browser actually runs.** igv.js 3.8.10 is vendored into `static/`, which the
+  page has asked for since 0.1.0 (and since suite 2.33.0 before that) while the file itself was
+  never added: every visitor got the "igv.min.js did not load" note instead of a viewer. It is
+  served from `/genome/static/`, never a CDN, so an isolated network is still enough.
+- `NOTICE` records igv.js and the libraries its bundle carries (DOMPurify, vanilla-picker,
+  regenerator-runtime, canvas2svg, portions of GMOD two-bit.js), and `static/igv.js-LICENSE.txt`
+  carries the MIT notice that has to travel with the code. `NOTICE` also gives the igv.js paper to
+  cite, since views from this tool are meant for figures.
+- Tests over the page and the vendored bundle: the file is there and is the bundle, the licence is
+  beside it, the page boots it from this tool's own mount with nothing fetched from the internet,
+  and the asset route serves it while still refusing to climb out of `static/`. None of this was
+  covered, which is how the missing file went unnoticed for five releases.
+
+### Changed
+- The note shown when the viewer cannot start says what it now means — the file is missing from the
+  image — rather than telling the reader it has yet to be vendored.
+
 ## [0.1.0] - 2026-11-06
 
 The Genome Browser's first release of its own. It shipped inside the suite repository as `genome/`
