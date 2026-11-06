@@ -34,7 +34,7 @@ from notebook import register_notebook
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.1.0'
+APP_VERSION = '2.34.3'
 
 
 # ---------------------------------------------------------------------------
