@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      # pyBigWig has no wheel and is built from source: it needs these headers.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev
+      - run: pip install -r requirements.txt
+      # The application makes its data root when the module is imported, and
+      # the default is /genome, the volume it has in the container: without
+      # this, collection fails here as an ordinary user before a test runs.
+      - run: pytest -q
+        env:
+          GENOME_DATA_ROOT: ${{ runner.temp }}/genome
+
+      # The conversion toolchain lives in the image, not on this runner, so the
+      # tests that use it skip above. Build the image and run them inside it.
+      - name: The conversion toolchain, in the image
+        run: |
+          docker build -t genome-browser:ci .
+          docker run --rm --user 0 -v "$PWD":/src:ro genome-browser:ci sh -c '
+            mkdir -p /work && cp -r /src/. /work/ \
+            && apt-get update -qq && apt-get install -y -qq python3-pytest >/dev/null \
+            && cd /work && GENOME_DATA_ROOT=/tmp/genome python3 -m pytest -q test_smoke.py'

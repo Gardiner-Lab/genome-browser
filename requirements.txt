@@ -7,6 +7,12 @@
 flask==3.0.3
 gunicorn==22.0.0
 pyBigWig==0.3.22
+# pyBigWig needs numpy at run time but does not install it, and 0.3.22 has no
+# wheel: it is built from source against numpy 1 and refuses to import under
+# numpy 2, so numpy is pinned below 2 here. The image gets both from Debian
+# (python3-pybigwig pulls python3-numpy); a pip environment has to be told. The
+# build also needs zlib, curl and ssl headers, which the workflows install.
+numpy==1.26.4
 requests==2.32.3
 
 # Testing: unit tests and Hypothesis property-based tests (per the design's
