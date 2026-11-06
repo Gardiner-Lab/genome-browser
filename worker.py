@@ -259,6 +259,13 @@ def main() -> None:
     sleeping, so a backlog drains as fast as one job at a time allows.
     """
     config = load_config()
+    # The web app normally creates the schema and data directories on
+    # startup, but the worker is a separate container that may come up first
+    # on a fresh genome-data volume. Create them here too (idempotent) so the
+    # worker never queries a database before its tables exist.
+    for sub in ('', 'genomes', 'tracks', 'scratch'):
+        (config.data_root / sub).mkdir(parents=True, exist_ok=True)
+    db.init_db(config.data_root / 'genome.db')
     conn = db.connect(config.data_root / 'genome.db')
     try:
         summary = recover(conn, config.data_root)
