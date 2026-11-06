@@ -1,0 +1,6 @@
+# The vendored viewer is a built artifact: keep its bytes exactly as igv.js
+# published them. Without this, a checkout on a machine with core.autocrlf=true
+# could rewrite its line endings, which would change the file from the one the
+# checksum in static/README.md records. "binary" also spares anyone a diff of
+# 1.4 MB of minified JavaScript.
+static/igv.min.js binary
