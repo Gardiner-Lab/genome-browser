@@ -72,6 +72,25 @@ Genomics Viewer (IGV)", *Bioinformatics*, [doi:10.1093/bioinformatics/btac830][i
 
 [igvjs]: https://doi.org/10.1093/bioinformatics/btac830
 
+## The genome it comes with
+
+On its first start the worker adds **Arabidopsis thaliana TAIR10** with the **Araport11** genes and
+transposons (2025-08-13) as the suite's reference genome, seen by every lab (`bundled.py`). An
+installation with a suite TAIR10 already keeps its own; one whose administrator deletes it is not
+given it back; `GENOME_BUNDLED_ARAPORT11=0` leaves it out. The image downloads the two files at
+build time from this repository's [`data-araport11` release][data], checked against SHA-256s pinned
+in the `Dockerfile`.
+
+They are from [The Arabidopsis Information Resource (TAIR)](https://www.arabidopsis.org), unchanged
+(gzip-compressed), under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Cite Cheng C-Y
+et al., "Araport11: a complete reannotation of the Arabidopsis thaliana reference genome",
+*The Plant Journal* 89: 789-804 (2017), [doi:10.1111/tpj.13415](https://doi.org/10.1111/tpj.13415),
+and Lamesch P et al., "The Arabidopsis Information Resource (TAIR): improved gene annotation and new
+tools", *Nucleic Acids Research* 40: D1202-10 (2012),
+[doi:10.1093/nar/gkr1090](https://doi.org/10.1093/nar/gkr1090). `NOTICE` records them too.
+
+[data]: https://github.com/Gardiner-Lab/genome-browser/releases/tag/data-araport11
+
 ## The conversion toolchain
 
 The image is Debian-based rather than Alpine because the toolchain is not reliably packaged for

@@ -403,6 +403,10 @@ def _mutate_genome_share(genome_id, grant: bool):
         groups, labs, error = _share_targets(request.get_json(silent=True))
         if error is not None:
             return jsonify({'error': error}), 400
+        if labs_reader.in_demo(member) and (
+                set(labs) - labs_reader.demo_lab_ids()
+                or any(set(labs_reader.labs_in_chair_group(g)) - labs_reader.demo_lab_ids() for g in groups)):
+            return jsonify({'error': 'The demo shares with the demo labs only.'}), 400
 
         if grant:
             for group in groups:

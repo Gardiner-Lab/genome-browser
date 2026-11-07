@@ -57,6 +57,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# The genome the browser ships with (bundled.py): TAIR10 with the Araport11
+# annotation, from TAIR (CC BY 4.0; see NOTICE). Kept as assets of this repo's
+# data-araport11 release rather than in git, and checked against the SHA-256s
+# pinned here, so a download cannot be silently substituted. The worker adds
+# them as the suite's genome on a volume's first start.
+ARG BUNDLED_URL=https://github.com/Gardiner-Lab/genome-browser/releases/download/data-araport11
+ARG TAIR10_FASTA_SHA256=d43e19a85e6ae5dd18cf6adea2d21ed15ad8a58ae374f58dbfdbfcff1b9b13eb
+ARG ARAPORT11_GFF_SHA256=cedd155953964ad06b492741569d4e5a61d8db7a1e52a0def164f9f32169d03d
+RUN mkdir -p /opt/bundled  && wget -q -O /opt/bundled/TAIR10_chr_all.fasta.gz "$BUNDLED_URL/TAIR10_chr_all.fasta.gz"  && wget -q -O /opt/bundled/Araport11_GFF3_genes_transposons.20250813.gff.gz          "$BUNDLED_URL/Araport11_GFF3_genes_transposons.20250813.gff.gz"  && echo "$TAIR10_FASTA_SHA256  /opt/bundled/TAIR10_chr_all.fasta.gz" | sha256sum -c -  && echo "$ARAPORT11_GFF_SHA256  /opt/bundled/Araport11_GFF3_genes_transposons.20250813.gff.gz" | sha256sum -c -
+
+# ---------------------------------------------------------------------------
 # Unprivileged runtime user (uid 1000) owning the data mount.
 # The named volume `genome-data` is mounted at /genome and holds the SQLite DB,
 # stored BigWig/feature files, and the conversion scratch area.

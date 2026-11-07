@@ -43,11 +43,17 @@ def register_sharing(app: Flask) -> None:
 
     @app.route('/api/labs')
     def list_labs():
-        identity.require_member()
+        member = identity.require_member()
         groups = labs_reader.all_chair_groups()
         names = {g['id']: g['name'] for g in groups}
         labs = [dict(lab, chair_group=names.get(lab['chair_group_id']))
                 for lab in labs_reader.all_labs()]
+        if labs_reader.in_demo(member):
+            # The teaching demo is shown its own labs and chair group, not the real ones.
+            demo = labs_reader.demo_lab_ids()
+            labs = [lab for lab in labs if lab['id'] in demo]
+            mine = {lab['chair_group_id'] for lab in labs}
+            groups = [g for g in groups if g['id'] in mine]
         return jsonify({'labs': labs, 'chair_groups': groups})
 
     @app.route('/api/genomes/<genome_id>/shares')

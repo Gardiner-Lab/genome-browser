@@ -312,6 +312,8 @@ def register_tracks(app: Flask) -> None:
             # Validate every lab target before touching any row, so a single
             # invalid lab leaves Visibility unchanged (Req 7.8).
             for lab_id in labs:
+                if labs_reader.in_demo(member) and lab_id not in labs_reader.demo_lab_ids():
+                    return jsonify({'error': 'The demo shares with the demo labs only.'}), 400
                 if not _lab_exists(lab_id):
                     return jsonify({
                         'error': f'The lab "{lab_id}" is invalid: it does not '

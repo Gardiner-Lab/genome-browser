@@ -51,6 +51,7 @@ from pathlib import Path
 
 import conversion
 import conversion_queue
+import bundled
 import db
 
 # How long to wait before polling again when the queue is empty or the
@@ -275,6 +276,14 @@ def main() -> None:
             f"{summary['re_enqueued']} orphaned track(s) re-enqueued, "
             f"{summary['failed']} track(s) failed (input gone).",
             flush=True)
+
+        # The genome the browser ships with (bundled.py), on a volume's first start.
+        try:
+            added = bundled.seed(conn, config.data_root)
+            if added:
+                print(f'[genome-worker] added the bundled TAIR10 / Araport11 genome ({added}).', flush=True)
+        except Exception as exc:  # never stop the worker over it; an administrator can upload it
+            print(f'[genome-worker] could not add the bundled genome: {exc}', flush=True)
 
         while True:
             processed = run_once(conn, config.data_root, config)

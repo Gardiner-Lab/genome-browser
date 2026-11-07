@@ -160,3 +160,21 @@ def test_who_sees_what_is_readable(world):
     assert 'registration_code' not in labs['labs'][0]
     # dave sees neither.
     assert world['call']('GET', f"/api/tracks/{world['track']}/shares", user='dave').status_code == 404
+
+
+def test_the_demo_sees_only_the_demos(world, monkeypatch):
+    """Chair group cgX (carol, dave) as the suite's teaching demo: the suite genome, nothing shared in."""
+    w = world
+    monkeypatch.setattr(labs_reader, 'demo_lab_ids', lambda: {'labX', 'labY'})
+    # The suite's genome it sees; a real lab's track on it, not.
+    assert _sees_genome(w, 'carol', w['suite_genome'])
+    suite_tracks = w['call']('GET', f"/api/genomes/{w['suite_genome']}/tracks", user='carol')
+    assert all(t['id'] != w['suite_track'] for t in suite_tracks.get_json())
+    # labA shares its track (and so its genome) with labX: the demo still sees neither.
+    r = w['call']('POST', f"/api/tracks/{w['track']}/share", body={'labs': ['labX']})
+    assert r.status_code in (200, 201), r.get_json()
+    assert not _sees_genome(w, 'carol') and not _sees_track(w, 'carol')
+    # It is shown its own labs and chair group only.
+    listed = w['call']('GET', '/api/labs', user='carol').get_json()
+    assert {lab['id'] for lab in listed['labs']} == {'labX', 'labY'}
+    assert [g['id'] for g in listed['chair_groups']] == ['cgX']

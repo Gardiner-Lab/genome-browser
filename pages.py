@@ -330,7 +330,8 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
         <div class="help-card">
           <h3>{_glyph(s, 'library')} Reference genomes</h3>
           <p>An assembly uploaded as FASTA, by a lab for its chair group, or by an administrator for the
-             whole suite.</p>
+             whole suite. It comes with Arabidopsis thaliana (TAIR10, with the Araport11 annotation) for
+             everyone.</p>
         </div>
         <div class="help-card">
           <h3>{_glyph(s, 'line')} Tracks</h3>
@@ -394,6 +395,16 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
          Mesirov JP. <i>igv.js: an embeddable JavaScript implementation of the Integrative Genomics Viewer
          (IGV).</i> Bioinformatics (2023).
          <a href="https://doi.org/10.1093/bioinformatics/btac830">doi:10.1093/bioinformatics/btac830</a></p>
+      <p>The genome it comes with, <b>Arabidopsis thaliana TAIR10</b> with the <b>Araport11</b> genes and
+         transposons, is from <a href="https://www.arabidopsis.org" rel="noopener">The Arabidopsis Information
+         Resource (TAIR)</a>, unchanged, under the
+         <a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener">Creative Commons Attribution 4.0</a>
+         licence. If it goes into a paper, cite: Cheng C-Y <i>et al.</i> <i>Araport11: a complete reannotation of
+         the Arabidopsis thaliana reference genome.</i> The Plant Journal 89: 789&ndash;804 (2017).
+         <a href="https://doi.org/10.1111/tpj.13415">doi:10.1111/tpj.13415</a>; and Lamesch P <i>et al.</i>
+         <i>The Arabidopsis Information Resource (TAIR): improved gene annotation and new tools.</i> Nucleic
+         Acids Research 40: D1202&ndash;D1210 (2012).
+         <a href="https://doi.org/10.1093/nar/gkr1090">doi:10.1093/nar/gkr1090</a></p>
       <p>The Genome Browser is free software under the GNU General Public License v3.0.</p>
     </section>
 """

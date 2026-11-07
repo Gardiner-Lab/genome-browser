@@ -9,6 +9,14 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+### Demo
+- **The teaching demo sees only the demo's.** Someone in the suite's demo sees the suite's reference genomes and tracks and the demo labs' own; not a real lab's genome or track, even one shared with them, and is offered only the demo's labs to share with.
+
+### Added
+- **Comes with Arabidopsis thaliana.** On its first start the worker adds TAIR10 with the Araport11 genes and transposons (2025-08-13) as the suite's reference genome, for every lab (bundled.py). An installation that has a suite TAIR10 already keeps its own, a deleted one is not added back, and `GENOME_BUNDLED_ARAPORT11=0` leaves it out. The data is TAIR's, under CC BY 4.0, credited on the About page, in the README and in NOTICE.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added

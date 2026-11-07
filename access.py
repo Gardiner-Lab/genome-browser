@@ -178,6 +178,9 @@ def can_view_genome(username: str, genome, conn=None) -> bool:
     username = (username or '').strip()
     if not username or genome is None:
         return False
+    if (labs_reader.in_demo(username) and _get(genome, 'genome_visibility') != SUITE_VISIBILITY
+            and _get(genome, 'owner_lab') not in labs_reader.demo_lab_ids()):
+        return False      # the teaching demo sees the suite's genomes and the demo labs' only
     if _get(genome, 'genome_visibility') == SUITE_VISIBILITY:
         return True
     return bool(_member_lab_ids(username) & genome_viewer_labs(genome, conn))
@@ -241,6 +244,9 @@ def can_view_track(username: str, track, conn=None) -> bool:
         return False
     if _get(track, 'track_status', 'ready') != 'ready':
         return False
+    if (labs_reader.in_demo(username) and _get(track, 'visibility') != SUITE_VISIBILITY
+            and _get(track, 'owner_lab') not in labs_reader.demo_lab_ids()):
+        return False      # the teaching demo sees the suite's tracks and the demo labs' only
     if _get(track, 'visibility') == SUITE_VISIBILITY:
         return True
     return bool(_member_lab_ids(username) & track_viewer_labs(track, conn))

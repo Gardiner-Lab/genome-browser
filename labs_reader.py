@@ -127,3 +127,24 @@ def lab_name(lab_id: str) -> Optional[str]:
 def chair_group_name(group_id: str) -> Optional[str]:
     rows = _query('SELECT name FROM chair_groups WHERE id = ?', (group_id,)) if group_id else []
     return rows[0]['name'] if rows else None
+
+
+def demo_lab_ids() -> set:
+    """
+    The suite's teaching demo's labs: those in the chair group recorded as the demo's
+    (suite.db settings 'demo.chair_group', set by the suite's demo/accounts.py).
+    """
+    rows = _query("SELECT value FROM settings WHERE key = 'demo.chair_group'")
+    group = rows[0]['value'] if rows else None
+    return set(labs_in_chair_group(group)) if group else set()
+
+
+def in_demo(username: str) -> bool:
+    """
+    In the teaching demo: every lab of theirs is one of the demo's. They see the suite's reference
+    genomes and tracks (TAIR10 / Araport11) and the demo labs' own; not a real lab's, even one
+    shared with them.
+    """
+    demo = demo_lab_ids()
+    mine = {m['lab_id'] for m in labs_of(username)} if demo else set()
+    return bool(mine) and mine <= demo
