@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Backups">
+  <title>Backups</title>
+  
+  <rect x="8" y="11" width="48" height="11" rx="3" fill="none" stroke="#8b5a2b" stroke-width="4"/><path d="M12 22V51A4 4 0 0 0 16 55H48A4 4 0 0 0 52 51V22" fill="none" stroke="#8b5a2b" stroke-width="4" stroke-linejoin="round"/><path d="M36.25 31.64A8.5 8.5 0 1 1 24.64 34.75" fill="none" stroke="#2f8f46" stroke-width="3.6" stroke-linecap="round"/><path d="M27.64 29.55L26.47 38.86L20.16 35.22Z" fill="#2f8f46"/>
+</svg>

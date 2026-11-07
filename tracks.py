@@ -53,6 +53,8 @@ for the whole module); this module does not re-register it and instead relies on
 that handler.
 """
 
+import gzip
+import json
 import re
 import shutil
 import sqlite3
@@ -63,11 +65,15 @@ from flask import Flask, current_app, jsonify, request, send_file
 
 import access
 import align
+import chrom_names
 import conversion_queue
 import db
+import feature_index
 import identity
 import labs_reader
 import readers
+import regions
+import serving
 
 # One gigabyte in bytes, for turning the MAX_BAM_GB ceiling into a byte limit.
 _BYTES_PER_GB = 1024 ** 3
@@ -125,7 +131,14 @@ def register_tracks(app: Flask) -> None:
                 # a member learns nothing about genomes outside their reach.
                 return jsonify({'error': 'Reference genome not found'}), 404
 
-            owner_lab = labs_reader.current_lab(member)
+            # An administrator's track on a suite reference genome belongs to
+            # the suite too, and every member sees it; anyone else's track on
+            # it is their lab's, as on any genome.
+            if (genome['owner_lab'] == access.SUITE_OWNER
+                    and identity.is_admin(member)):
+                owner_lab = access.SUITE_OWNER
+            else:
+                owner_lab = labs_reader.current_lab(member)
             if not owner_lab:
                 return jsonify({
                     'error': 'You must belong to a lab to upload a track.',
@@ -195,6 +208,9 @@ def register_tracks(app: Flask) -> None:
             body = {'track_status': track['track_status']}
             if track['track_status'] == 'failed':
                 body['error'] = track['error']
+            check = _chrom_check(track)
+            if check:
+                body['chrom_check'] = check
             return jsonify(body)
         finally:
             conn.close()
@@ -403,29 +419,105 @@ def _add_bigwig(conn, data_root, genome, member, owner_lab, name, upload):
 
         header = readers.read_bigwig_header(str(scratch_path))
         chrom_sizes = _chrom_sizes(conn, genome['id'])
-        result = align.check_alignment(header, chrom_sizes)
-        if not result.accepted:
+
+        # Chromosome names first: those that differ from the genome's only in
+        # style are renamed; a coverage track with any name the genome does not
+        # have under any spelling is refused, as before.
+        match = chrom_names.match_names(header.chroms, chrom_sizes)
+        result = align.check_alignment(
+            chrom_names.rename_header(header, match), chrom_sizes)
+        if match.unmatched or not result.accepted:
             # Persist nothing: no row, no stored file. Scratch is cleaned in the
             # finally below, so a rejected upload leaves no trace.
-            return jsonify({
-                'error': 'Track does not align to the reference genome.',
-                'detail': result.error_message,
-                'unmatched_chroms': result.unmatched_chroms,
-                'out_of_range': [
-                    {'chrom': v.chrom, 'coordinate': v.coordinate,
-                     'length': v.length}
-                    for v in result.out_of_range
-                ],
-            }), 400
+            return _alignment_refusal(
+                result, chrom_sizes, match,
+                _genomes_that_fit(conn, member, header, genome['id']))
 
+        if match.renames:
+            renamed_path = scratch_dir / f'renamed-{scratch_path.name}'
+            try:
+                chrom_names.rewrite_bigwig(str(scratch_path), str(renamed_path),
+                                           match.renames)
+            except (RuntimeError, OSError, ValueError) as exc:
+                return jsonify({
+                    'error': 'Track does not align to the reference genome.',
+                    'detail': f'Its chromosome names could not be rewritten '
+                              f'to the genome\'s: {exc}.',
+                }), 400
+            renamed_path.replace(scratch_path)
+
+        report = match.report()
         track_id = uuid.uuid4().hex
         stored_path = _store_file(data_root, track_id, scratch_path)
         _insert_track(conn, track_id, genome['id'], name, 'bigwig', owner_lab,
-                      member, track_status='ready', file_path=str(stored_path))
+                      member, track_status='ready', file_path=str(stored_path),
+                      chrom_check=report)
         conn.commit()
-        return jsonify(_track_body(track_id, name, 'bigwig', owner_lab)), 201
+        return jsonify(_track_body(track_id, name, 'bigwig', owner_lab,
+                                   report)), 201
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+def _alignment_refusal(result, chrom_sizes, match, fits=()):
+    """
+    The 400 for a track that does not align, naming every offender.
+
+    ``result`` is the coordinate check on the header under the genome's names
+    (so it holds no name offenders of its own); the name offenders come from
+    ``match``. The genome's chromosome names are listed too, so the member can
+    see what the file should have used, and ``fits_genomes`` names the member's
+    other genomes the file does align to, so it can go to the right one.
+    """
+    parts = []
+    if match.unmatched:
+        names = ', '.join(match.unmatched)
+        plural = 's' if len(match.unmatched) > 1 else ''
+        parts.append(f'Chromosome/contig name{plural} not found in the '
+                     f'reference genome under any spelling: {names}.')
+    parts.extend(result.messages)
+    return jsonify({
+        'error': 'Track does not align to the reference genome.',
+        'detail': ' '.join(parts),
+        'unmatched_chroms': list(match.unmatched),
+        'out_of_range': [
+            {'chrom': v.chrom, 'coordinate': v.coordinate, 'length': v.length}
+            for v in result.out_of_range
+        ],
+        'genome_chroms': list(chrom_sizes),
+        'fits_genomes': list(fits),
+    }), 400
+
+
+def _genomes_that_fit(conn, member, header, exclude_id, limit=5):
+    """
+    The member's other genomes a track's header aligns to, as ``{id, name}``.
+
+    A genome fits when every chromosome the track names is in it under some
+    spelling and every coordinate lies within its chromosome — the same test
+    the upload itself applies, so offering one means its upload would succeed.
+    """
+    if header.reason or not header.chroms:
+        return []
+    out = []
+    rows = conn.execute(
+        'SELECT id, name, assembly_id, owner_lab, genome_visibility '
+        'FROM reference_genomes WHERE id != ? ORDER BY name COLLATE NOCASE',
+        (exclude_id,)).fetchall()
+    for row in rows:
+        if not access.can_view_genome(member, row, conn):
+            continue
+        sizes = _chrom_sizes(conn, row['id'])
+        match = chrom_names.match_names(header.chroms, sizes)
+        if match.unmatched:
+            continue
+        if align.check_alignment(chrom_names.rename_header(header, match),
+                                 sizes).accepted:
+            out.append({'id': row['id'], 'name': row['name'],
+                        'assembly_id': row['assembly_id']})
+            if len(out) >= limit:
+                break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -436,27 +528,110 @@ def _add_bigwig(conn, data_root, genome, member, owner_lab, name, upload):
 def _add_feature_track(conn, data_root, genome, member, owner_lab, name, fmt,
                        upload):
     """
-    The Feature_Track path: store the uploaded BED/GFF/GFF3 as-is, ready.
+    The Feature_Track path: check the chromosome names, then store, ready.
 
-    A track id is minted up front so the file lands in ``tracks/<id>/``; the
-    stored ``type`` is ``'bed'`` or ``'gff'`` (the key ``readers`` detection
-    returns), and the row is created ``ready`` with its ``file_path`` set
-    (Requirement 4.2). Feature files carry no coordinate system the module
-    validates on upload, so there is no alignment gate here.
+    A gzipped file is unpacked first (the region reader reads plain text). The
+    file's chromosome names are checked against the genome's:
+
+    * a name that differs from the genome's only in style (``1`` / ``chr1`` /
+      ``Chr1``, ``Mt`` / ``ChrM``) is **renamed** in the stored copy;
+    * a file in which **no** name is in the genome is refused, persisting
+      nothing — it was made for another assembly;
+    * a file in which **some** names are not in the genome is accepted, and the
+      response says which, since those features will never be drawn — unless
+      another of the member's genomes has all of them, when it is refused and
+      that genome offered (``fits_genomes``), since it belongs there;
+    * a feature past the end of its (matched) chromosome is refused, persisting
+      nothing — the coordinates are from another assembly.
+
+    What was renamed or left unmatched is returned as ``chrom_check`` and kept
+    on the track. The stored ``type`` is ``'bed'`` or ``'gff'`` and the row is
+    created ``ready`` with its ``file_path`` set (Requirement 4.2).
     """
-    track_id = uuid.uuid4().hex
     scratch_dir = data_root / 'scratch' / f'upload-{uuid.uuid4().hex}'
     scratch_dir.mkdir(parents=True, exist_ok=True)
-    scratch_path = scratch_dir / _safe_name(upload.filename, default='track')
+    scratch_path = scratch_dir / _safe_name(_plain_name(upload.filename),
+                                            default='track')
     try:
         upload.save(str(scratch_path))
+        if _is_gzip(scratch_path):
+            try:
+                _gunzip_in_place(scratch_path)
+            except (OSError, EOFError) as exc:
+                return jsonify({'error': f'The file could not be unpacked: '
+                                         f'{exc}.'}), 400
+
+        chrom_sizes = _chrom_sizes(conn, genome['id'])
+        header = readers.read_track_header(fmt, str(scratch_path))
+        match = chrom_names.match_names(header.chroms, chrom_sizes)
+        if match.all_unmatched:
+            return jsonify({
+                'error': 'Track does not align to the reference genome.',
+                'detail': 'None of its chromosome names are in the reference '
+                          'genome under any spelling: '
+                          + ', '.join(match.unmatched) + '.',
+                'unmatched_chroms': match.unmatched,
+                'out_of_range': [],
+                'genome_chroms': list(chrom_sizes),
+                'fits_genomes': _genomes_that_fit(conn, member, header,
+                                                  genome['id']),
+            }), 400
+        result = align.check_alignment(
+            chrom_names.rename_header(header, match), chrom_sizes)
+        if not result.accepted:
+            return _alignment_refusal(
+                result, chrom_sizes, match,
+                _genomes_that_fit(conn, member, header, genome['id']))
+        if match.unmatched:
+            # Only part of the file is on this genome. If another of the
+            # member's genomes has all of it, the file belongs there instead.
+            fits = _genomes_that_fit(conn, member, header, genome['id'])
+            if fits:
+                return _alignment_refusal(result, chrom_sizes, match, fits)
+
+        if match.renames:
+            renamed_path = scratch_dir / f'renamed-{scratch_path.name}'
+            chrom_names.rewrite_text_file(scratch_path, renamed_path, fmt,
+                                          match.renames)
+            renamed_path.replace(scratch_path)
+
+        report = match.report()
+        track_id = uuid.uuid4().hex
         stored_path = _store_file(data_root, track_id, scratch_path)
+        try:
+            # Index it now so the first view is a lookup; if this fails, the
+            # first region read builds it instead.
+            feature_index.build(stored_path, regions.feature_parser(fmt))
+        except (OSError, sqlite3.Error):
+            pass
+        # And the sorted, compressed copy the viewer reads (serving.py); if the
+        # tools are missing, the first view makes it instead.
+        serving.prepare_feature_track(stored_path, fmt)
         _insert_track(conn, track_id, genome['id'], name, fmt, owner_lab,
-                      member, track_status='ready', file_path=str(stored_path))
+                      member, track_status='ready', file_path=str(stored_path),
+                      chrom_check=report)
         conn.commit()
-        return jsonify(_track_body(track_id, name, fmt, owner_lab)), 201
+        return jsonify(_track_body(track_id, name, fmt, owner_lab, report)), 201
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+def _plain_name(filename: str) -> str:
+    """The upload's filename without a trailing ``.gz``, since it is stored unpacked."""
+    name = filename or ''
+    return name[:-3] if name.lower().endswith('.gz') else name
+
+
+def _is_gzip(path: Path) -> bool:
+    with open(path, 'rb') as handle:
+        return handle.read(2) == b'\x1f\x8b'
+
+
+def _gunzip_in_place(path: Path) -> None:
+    unpacked = path.with_name(path.name + '.unpacked')
+    with gzip.open(path, 'rb') as source, open(unpacked, 'wb') as target:
+        shutil.copyfileobj(source, target, 1024 * 1024)
+    unpacked.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -572,33 +747,60 @@ def _store_file(data_root: Path, track_id: str, source: Path) -> Path:
 
 
 def _insert_track(conn, track_id, genome_id, name, track_type, owner_lab,
-                  created_by, track_status, file_path):
+                  created_by, track_status, file_path, chrom_check=None):
     """
     Write one ``tracks`` row.
 
     ``visibility`` is always ``'lab_only'`` on create (Requirement 4.3);
     ``track_status`` and ``file_path`` vary by path (``ready`` with a path for
     the direct-store formats, ``converting`` with no path for the conversion
-    inputs).
+    inputs). ``chrom_check`` is what the chromosome-name check renamed or left
+    unmatched (``chrom_names.NameMatch.report``), kept as JSON.
     """
     conn.execute(
         'INSERT INTO tracks '
         '(id, genome_id, name, type, owner_lab, visibility, track_status, '
-        ' file_path, created_by) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (track_id, genome_id, name, track_type, owner_lab, 'lab_only',
-         track_status, file_path, created_by))
+        ' file_path, created_by, chrom_check) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (track_id, genome_id, name, track_type, owner_lab,
+         _initial_visibility(owner_lab),
+         track_status, file_path, created_by,
+         json.dumps(chrom_check) if chrom_check else None))
 
 
-def _track_body(track_id, name, track_type, owner_lab):
+def _track_body(track_id, name, track_type, owner_lab, chrom_check=None):
     """The JSON a successful create returns, matching the read endpoints' shape."""
-    return {
+    body = {
         'id': track_id,
         'name': name,
         'type': track_type,
         'owner_lab': owner_lab,
-        'visibility': 'lab_only',
+        'visibility': _initial_visibility(owner_lab),
     }
+    if chrom_check:
+        body['chrom_check'] = chrom_check
+    return body
+
+
+def _initial_visibility(owner_lab: str) -> str:
+    """``lab_only`` for a lab's track (Req 4.3); ``suite`` for the suite's own."""
+    if owner_lab == access.SUITE_OWNER:
+        return access.SUITE_VISIBILITY
+    return 'lab_only'
+
+
+def _chrom_check(track):
+    """A track row's stored chromosome-name report, or None."""
+    try:
+        raw = track['chrom_check']
+    except (IndexError, KeyError):
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
 def _chrom_sizes(conn, genome_id: str):
@@ -625,7 +827,7 @@ def _load_track(conn: sqlite3.Connection, track_id: str):
     """The tracks row for this id, or None when there is none."""
     return conn.execute(
         'SELECT id, genome_id, name, type, owner_lab, visibility, '
-        'track_status, error, file_path FROM tracks WHERE id = ?',
+        'track_status, error, file_path, chrom_check FROM tracks WHERE id = ?',
         (track_id,)).fetchone()
 
 
@@ -660,6 +862,7 @@ def _track_metadata(track) -> dict:
         'visibility': track['visibility'],
         'track_status': track['track_status'],
         'error': track['error'],
+        'chrom_check': _chrom_check(track),
     }
 
 

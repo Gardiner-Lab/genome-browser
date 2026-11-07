@@ -160,11 +160,13 @@ def test_bigwig_aligns_stored_ready(seeded, monkeypatch):
 
 
 def test_bigwig_name_mismatch_persists_nothing(seeded, monkeypatch):
-    # 'chr1' (lowercase) does not match 'Chr1' (case-sensitive) -> rejected.
+    # 'scaffold_9' is not in the genome under any spelling -> rejected, even
+    # though 'Chr1' beside it matches.
     monkeypatch.setattr(
         readers, 'read_bigwig_header',
         lambda path: readers.HeaderResult(
-            chrom_lengths={'chr1': 1000}, chrom_extents={'chr1': 500}))
+            chrom_lengths={'Chr1': 1000, 'scaffold_9': 50},
+            chrom_extents={'Chr1': 500, 'scaffold_9': 50}))
 
     resp = seeded['post']({
         'name': 'Bad Coverage',
@@ -172,8 +174,9 @@ def test_bigwig_name_mismatch_persists_nothing(seeded, monkeypatch):
     })
     assert resp.status_code == 400
     body = resp.get_json()
-    assert 'chr1' in body['detail']
-    assert body['unmatched_chroms'] == ['chr1']
+    assert 'scaffold_9' in body['detail']
+    assert body['unmatched_chroms'] == ['scaffold_9']
+    assert body['genome_chroms'] == ['Chr1', 'Chr2']
 
     # Persist-nothing contract: no track row, and no stored/scratch files.
     assert _tracks(seeded['data_root']) == []
@@ -233,6 +236,125 @@ def test_gff_stored_as_feature_track(seeded):
     assert len(rows) == 1
     assert rows[0]['type'] == 'gff'
     assert rows[0]['track_status'] == 'ready'
+
+
+# ---------------------------------------------------------------------------
+# Chromosome-name check on upload: renamed when only the style differs,
+# reported, and refused when the file belongs to another assembly
+# ---------------------------------------------------------------------------
+
+
+def _stored_text(row):
+    from pathlib import Path
+    return Path(row['file_path']).read_text(encoding='utf-8')
+
+
+def test_gff_names_in_another_style_are_renamed_and_reported(seeded):
+    gff = (b'##gff-version 3\n'
+           b'##sequence-region 1 1 1000\n'
+           b'1\tTAIR\tgene\t1\t100\t.\t+\t.\tID=g1\n'
+           b'chr02\tTAIR\tgene\t5\t50\t.\t-\t.\tID=g2\n')
+    resp = seeded['post']({'name': 'Genes',
+                           'file': (io.BytesIO(gff), 'genes.gff3')})
+    assert resp.status_code == 201
+    check = resp.get_json()['chrom_check']
+    assert check['renamed'] == {'1': 'Chr1', 'chr02': 'Chr2'}
+    assert check['not_in_genome'] == []
+    assert check['messages']
+
+    row = _tracks(seeded['data_root'])[0]
+    text = _stored_text(row)
+    assert '##sequence-region Chr1 1 1000\n' in text
+    assert 'Chr1\tTAIR\tgene\t1\t100' in text
+    assert 'Chr2\tTAIR\tgene\t5\t50' in text
+    assert '\n1\t' not in text
+
+    # The report stays on the track for later reads.
+    meta = seeded['client'].get(f"/api/tracks/{row['id']}",
+                                headers={'X-Suite-User': 'alice'}).get_json()
+    assert meta['chrom_check']['renamed'] == {'1': 'Chr1', 'chr02': 'Chr2'}
+    status = seeded['client'].get(f"/api/tracks/{row['id']}/status",
+                                  headers={'X-Suite-User': 'alice'}).get_json()
+    assert status['chrom_check']['renamed']['1'] == 'Chr1'
+
+
+def test_exact_names_report_nothing(seeded):
+    resp = seeded['post']({'name': 'Features',
+                           'file': (io.BytesIO(b'Chr1\t10\t20\tf\n'),
+                                    'features.bed')})
+    assert resp.status_code == 201
+    assert 'chrom_check' not in resp.get_json()
+
+
+def test_bed_partly_unmatched_is_accepted_with_a_warning(seeded):
+    bed = b'chr1\t10\t20\ta\nscaffold_9\t1\t5\tb\n'
+    resp = seeded['post']({'name': 'Features',
+                           'file': (io.BytesIO(bed), 'features.bed')})
+    assert resp.status_code == 201
+    check = resp.get_json()['chrom_check']
+    assert check['renamed'] == {'chr1': 'Chr1'}
+    assert check['not_in_genome'] == ['scaffold_9']
+    text = _stored_text(_tracks(seeded['data_root'])[0])
+    assert text.startswith('Chr1\t10\t20\ta\n')
+    assert 'scaffold_9\t1\t5\tb' in text
+
+
+def test_feature_file_from_another_assembly_is_refused(seeded):
+    bed = b'contig_1\t10\t20\ta\ncontig_2\t1\t5\tb\n'
+    resp = seeded['post']({'name': 'Features',
+                           'file': (io.BytesIO(bed), 'features.bed')})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body['unmatched_chroms'] == ['contig_1', 'contig_2']
+    assert body['genome_chroms'] == ['Chr1', 'Chr2']
+    assert _tracks(seeded['data_root']) == []
+    assert list((seeded['data_root'] / 'scratch').iterdir()) == []
+
+
+def test_feature_past_the_chromosome_end_is_refused(seeded):
+    gff = b'chr1\t.\tgene\t900\t1500\t.\t+\t.\tID=g1\n'
+    resp = seeded['post']({'name': 'Genes',
+                           'file': (io.BytesIO(gff), 'genes.gff')})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body['out_of_range'] == [
+        {'chrom': 'Chr1', 'coordinate': 1500, 'length': 1000}]
+    assert _tracks(seeded['data_root']) == []
+
+
+def test_gzipped_gff_is_unpacked_and_renamed(seeded):
+    import gzip
+    gff = gzip.compress(b'1\t.\tgene\t1\t100\t.\t+\t.\tID=g1\n')
+    resp = seeded['post']({'name': 'Genes',
+                           'file': (io.BytesIO(gff), 'genes.gff.gz')})
+    assert resp.status_code == 201
+    row = _tracks(seeded['data_root'])[0]
+    assert row['file_path'].endswith('genes.gff')
+    assert _stored_text(row) == 'Chr1\t.\tgene\t1\t100\t.\t+\t.\tID=g1\n'
+
+
+def test_bigwig_names_in_another_style_are_rewritten(seeded, monkeypatch):
+    import chrom_names
+    monkeypatch.setattr(
+        readers, 'read_bigwig_header',
+        lambda path: readers.HeaderResult(
+            chrom_lengths={'chr1': 1000}, chrom_extents={'chr1': 1000}))
+    calls = []
+
+    def fake_rewrite(src, dst, renames):
+        calls.append(renames)
+        with open(dst, 'wb') as handle:
+            handle.write(b'renamed bigwig')
+
+    monkeypatch.setattr(chrom_names, 'rewrite_bigwig', fake_rewrite)
+    resp = seeded['post']({'name': 'Coverage',
+                           'file': (io.BytesIO(b'bw'), 'coverage.bw')})
+    assert resp.status_code == 201
+    assert calls == [{'chr1': 'Chr1'}]
+    assert resp.get_json()['chrom_check']['renamed'] == {'chr1': 'Chr1'}
+    from pathlib import Path
+    row = _tracks(seeded['data_root'])[0]
+    assert Path(row['file_path']).read_bytes() == b'renamed bigwig'
 
 
 # ---------------------------------------------------------------------------

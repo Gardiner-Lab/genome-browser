@@ -63,7 +63,9 @@ def test_the_page_boots_the_vendored_viewer(client):
     assert page.status_code == 200
     html = page.get_data(as_text=True)
     assert '/genome/static/igv.min.js' in html
-    assert 'igv.createBrowser' in html
+    assert '/genome/static/browser.js' in html
+    script = client.get('/static/browser.js').get_data(as_text=True)
+    assert 'igv.createBrowser' in script
     assert 'igv-container' in html
     # Nothing is fetched from the internet: an isolated network must be enough.
     for host in ('cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com', 'http://', 'https://'):
@@ -84,3 +86,40 @@ def test_the_asset_route_serves_the_viewer(client):
     for crafted in ('../app.py', '..%2fapp.py', '/etc/passwd'):
         answer = client.get(f'/static/{crafted}', follow_redirects=True)
         assert answer.status_code != 200, f'{crafted} was served'
+
+
+# ---------------------------------------------------------------------------
+# Help and About, and the guides that point into them
+# ---------------------------------------------------------------------------
+
+
+def test_help_and_about_are_linked_and_served(client):
+    page = client.get('/').get_data(as_text=True)
+    assert 'href="/genome/help"' in page and 'href="/genome/about"' in page
+
+    help_page = client.get('/help')
+    assert help_page.status_code == 200
+    text = help_page.get_data(as_text=True)
+    assert '<span class="tt-sub">Help</span>' in text
+    assert '/genome/static/trellis/modules.js' in text
+
+    about = client.get('/about')
+    assert about.status_code == 200
+    assert f'Genome Browser {app_module.APP_VERSION}' in about.get_data(as_text=True)
+
+
+def test_every_help_link_lands_on_a_section(client):
+    import re
+    help_text = client.get('/help').get_data(as_text=True)
+    sections = set(re.findall(r'<section id="([^"]+)"', help_text))
+    linked = set(re.findall(r'/genome/help#([\w-]+)', client.get('/').get_data(as_text=True)))
+    linked |= set(re.findall(r'href="#([\w-]+)"', help_text))
+    assert linked, 'the page links into the help'
+    assert linked <= sections, f'links to missing help sections: {sorted(linked - sections)}'
+
+
+def test_the_guides_are_on_the_page(client):
+    page = client.get('/').get_data(as_text=True)
+    for marker in ('id="intro-guide"', 'id="controls"', 'id="controls-toggle"',
+                   'Shift</kbd> + drag', 'Double-click a feature'):
+        assert marker in page, marker

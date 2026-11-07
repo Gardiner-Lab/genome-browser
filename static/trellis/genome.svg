@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Genome Browser">
+  <title>Genome Browser</title>
+  
+  <path d="M8 47H56" stroke="#8b5a2b" stroke-width="4.2" stroke-linecap="round"/><path d="M16 47V53M32 47V53M48 47V53" stroke="#8b5a2b" stroke-width="2.4" stroke-linecap="round"/><path d="M9 27H51" stroke="#2f8f46" stroke-width="2.4" stroke-linecap="round"/><rect x="12" y="19" width="9" height="16" rx="2" fill="#2f8f46"/><rect x="27" y="19" width="12" height="16" rx="2" fill="#2f8f46"/><rect x="45" y="21.5" width="5" height="11" rx="1.5" fill="#2f8f46"/><path d="M62.00 27.00L53.35 30.64L53.35 23.36Z" fill="#2f8f46"/>
+</svg>

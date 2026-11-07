@@ -96,9 +96,25 @@ def init_db(path=None) -> None:
     try:
         if SCHEMA_FILE.exists():
             conn.executescript(SCHEMA_FILE.read_text())
+            _add_missing_columns(conn)
             conn.commit()
     finally:
         conn.close()
+
+
+# Columns added after a table was first created, as (table, column, type).
+# ``CREATE TABLE IF NOT EXISTS`` leaves an existing table as it was, so a
+# volume made by an earlier release gets them here.
+_ADDED_COLUMNS = (
+    ('tracks', 'chrom_check', 'TEXT'),
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, column, kind in _ADDED_COLUMNS:
+        have = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+        if column not in have:
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {kind}')
 
 
 def database_reachable(path=None) -> bool:

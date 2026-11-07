@@ -9,6 +9,145 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-07
+
+A browser that works end to end: choose what to show, select sequence and send it on, add
+genomes and tracks (many at once), change several tracks together, and save figures to the Lab
+Notebook, with every upload checked against its genome.
+
+### Added
+- **A landing page, and a browser that shows something.** `/genome/` used to start igv.js with
+  no genome (`genome: null`) and offer no way to choose one, so it stayed blank. Now it opens on
+  *Choose what to show*:
+  1. pick a genome (suite references are marked *Everyone*);
+  2. tick its tracks (Select all / none);
+  3. say where to start, by typing a region or clicking a chromosome. A name the genome doesn't
+     have is caught before the browser opens.
+
+  *Open in browser* then loads igv.js on that genome with those tracks. The view (place, tracks,
+  their order) is saved as you go, so `/genome/?genome=<id>` reopens where you left off, and
+  *Change genome or tracks* goes back with your choices kept. The page uses the suite's header and
+  look (`static/trellis/`, from Trellis Tools' `design/sync.sh`).
+- **The viewer reads indexed files by range request** (`serving.py`):
+  - `/api/genomes/<id>/reference.fa` and `.fai`: the sequence, indexed with `samtools faidx`. A
+    FASTA with uneven line lengths is re-wrapped once so it can be indexed; the sequence is
+    unchanged.
+  - `/api/tracks/<id>/coverage.bw`: a BigWig track's file.
+  - `/api/tracks/<id>/features.<bed|gff3>.gz` and `.tbi`: a sorted, bgzipped, tabix-indexed copy
+    of a BED/GFF, so igv.js draws GFF gene models (exons, UTRs, CDS joined into transcripts) and
+    fetches only the window on screen.
+
+  These files are made on upload, or on first request for data uploaded before. Every route checks
+  the same visibility as the rest of the API. The image gains Debian's `tabix` (bgzip, tabix).
+- `GET /api/genomes` also returns `suite`, `chromosome_count` and `length_bp` for each genome,
+  for the landing page.
+- **Add a genome / Add a track** on the landing page. A FASTA (gzipped or not) becomes a genome
+  of your lab; an administrator can also make it a suite reference. A GFF, BED, BigWig, BAM, wig
+  or bedGraph becomes a track on the chosen genome. Uploads show progress and report renamed
+  chromosomes, and a conversion is followed until it is ready. A gzipped FASTA is now unpacked on
+  upload.
+- **Many tracks at once.** *+ Add tracks* takes any number of files, chosen or dropped.
+  - Each file gets a row with a name to edit (starting from the filename), its format and size,
+    and × to leave it out. A file that isn't a track format is marked and skipped.
+  - The files go one after another, each with its own progress bar and result: *Added* (with any
+    renamed chromosomes), *Added, converting*, or *Refused* with the reason and, where it fits
+    another genome, *Add it to … instead*.
+  - A summary line counts them, and the added tracks arrive ticked. Those added cleanly are listed
+    as one line under the tracks, however many there were.
+- **Track settings: several tracks at once.** *Track settings* in the browser's toolbar lists the
+  open tracks with checkboxes (Select all / none). What is set applies to every ticked track:
+  - **height**: Short, Medium, Tall, or any number of pixels;
+  - **colour**: nine swatches, any colour, or back to the original colours;
+  - **gene display**: expanded, squished or collapsed (shown when a feature track is ticked);
+  - **coverage scale**: each its own, *shared* (one scale across the ticked tracks so their heights
+    compare), or a fixed min–max (shown when a coverage track is ticked);
+  - **remove from view**.
+
+  The settings are kept in the saved view, including changes made from a track's own ⚙ menu, so
+  a genome reopens looking the same. igv.js's own multi-select toggle, which drops height and
+  colour for mixed track types and kept nothing, is hidden in favour of this.
+- **Figures to the Lab Notebook.** *Figure* in the browser's toolbar previews the view, as igv.js
+  draws it, and offers:
+  - **Save to Lab Notebook**: a new page under today in your notebook, through the notebook's own
+    API as you. The page holds a line naming the genome, position, tracks and any selection, your
+    note, the figure as a picture (a PNG at twice the screen size, since the notebook shows only
+    raster images on its pages), and the SVG attached for download. *Open the page →* goes there.
+  - **Download SVG**: the figure straight to your computer.
+  - A notebook that cannot be reached leaves the SVG downloadable.
+- **A track goes to the genome it was made for.** A refused upload lists the member's other
+  genomes it does fit (`fits_genomes`), offered as *Add it to … instead*. A BED/GFF that only
+  partly fits the chosen genome, while another genome has all of it, is refused and sent there
+  rather than accepted with most of its features hidden.
+- **Select any sequence, and send it on.**
+  - **Shift-drag** across the tracks selects any stretch. **Select region** in the selection bar
+    makes a plain drag select instead of moving along the genome. Coordinates can also be typed
+    (`Chr1:3,631-5,899`). Double-clicking a feature still selects exactly that feature, without
+    zooming, in either mode. A region drawn with igv's own region tool is selected too.
+  - The selection is shown as a green band across every track, the bar turns green and reads
+    *Selected*, and a band with a running length follows the drag. Escape leaves Select mode, then
+    clears the selection.
+  - The selection bar offers:
+    - *Open in Sequence Editor*, up to 30 kb, with the annotations of the tracks on screen on the
+      selection's own coordinates. Longer selections disable it and say why.
+    - *BLAST at NCBI* and *Copy sequence*, up to 2 Mb.
+    - *Download FASTA*, at any length.
+  - A minus-strand feature is sent as it reads: reverse-complemented.
+  - Served by `GET /api/genomes/<id>/sequence` (JSON with annotations, up to 2 Mb) and
+    `GET /api/genomes/<id>/sequence.fasta` (streamed from `samtools faidx`, any length).
+- The suite's tool switcher (`static/trellis/modules.js`) in the header, as in every other tool.
+- **Help and About pages** (`/genome/help`, `/genome/about`, `pages.py`), linked from the header
+  like every other tool's.
+  - Help covers: golden rules, choosing what to show, moving around, the four ways to select,
+    what each sending option takes, adding genomes and tracks, chromosome names, why a track is
+    refused, who sees what, and what to do when something looks wrong.
+  - About says what the tool holds, how tracks are checked, how it works with the other tools,
+    where its data is kept (and that BLAST is the one thing that leaves the server), and credits
+    igv.js with the paper to cite.
+- **Guides in the tool:**
+  - a short *New to the Genome Browser?* intro on the landing page;
+  - a **Controls** panel in the browser listing every mouse and keyboard action, shown the first
+    time and then one click away;
+  - a **?** beside each landing-page step and in the upload dialogs, linking to the help;
+  - tooltips on the selection buttons saying what each takes and does.
+
+  The intro and the panel stay dismissed once dismissed, remembered in that browser only.
+- **Chromosome names are checked on every track upload, and fixed when only the style differs.** A
+  BED, GFF, BigWig, BAM or wig whose names differ from the reference genome's only in case, a
+  `chr`/`chrom`/`chromosome` prefix, leading zeros or the spelling of an organelle (`MT`, `Pt`,
+  `mitochondria`, `chloroplast`…) has them rewritten to the genome's. TAIR10's FASTA (`1`,
+  `mitochondria`) and Araport11's GFF3 (`Chr1`, `ChrM`) now go together. A name is renamed only when
+  it means one chromosome and no other. BigWigs get a new header, BAMs are reheadered with
+  `samtools reheader` before conversion, and text files are rewritten line by line.
+- **The upload says what it did.** `chrom_check` (`renamed`, `not_in_genome`, `messages`) comes back
+  on the upload response and is kept on the track, returned by `GET /api/tracks/<id>` and its
+  `/status`. A refusal now also lists the genome's chromosome names as `genome_chroms`.
+- A gzipped BED/GFF is unpacked on upload. Before, it was stored packed and could never be read.
+- **Suite reference genomes.** An administrator can upload a genome with `suite_reference=true`.
+  It then belongs to the suite rather than a lab (`owner_lab` `suite`, visibility `suite`), every
+  signed-in member sees it, and the administrator needs no lab of their own. Tracks an
+  administrator adds to it are suite-wide too; anyone else's track on it stays their lab's.
+- **Feature tracks are indexed.** Each stored BED/GFF gets a SQLite index beside it
+  (`<file>.idx.sqlite`), built on upload, or on first read for a track stored before. A region read
+  is now a lookup instead of a parse of the whole file: for Araport11's 289 MB GFF3, a few
+  milliseconds instead of re-reading 930,000 features on every pan and zoom.
+
+### Changed
+- **BED and GFF are now checked against the genome.** Before, they were stored without any check. A
+  file whose names are all missing from the genome is refused; one with only some missing is
+  accepted, and `chrom_check` names the rest. A feature past the end of its chromosome is refused.
+- `tracks` gains a `chrom_check` column, added to an existing database on start.
+
+### Removed
+- `POST /api/figure/notebook` and `notebook.py`. It posted figures to a Lab Notebook endpoint
+  (`/api/entries`) that never existed, so it never worked; *Figure* in the browser saves to the
+  notebook through the notebook's own API instead.
+
+### Fixed
+- **A line of a track file could be split in two.** The readers split on `str.splitlines`, which
+  also breaks on form feeds, the ASCII separators and Unicode line separators. Araport11's note
+  on AT5G64510 has a 0x1E in it, and its tail was read as a feature on a chromosome "c". Only a
+  newline ends a line now.
+
 ## [0.2.0] - 2026-11-06
 
 ### Added

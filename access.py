@@ -24,6 +24,11 @@ module is the single place both are resolved, over the module's own database
   shared chair group — **and only when ``track_status='ready'``** (Requirement
   13.6): a ``converting`` or ``failed`` track is viewable by no one.
 
+- **Suite references.** A genome an administrator uploads as a suite
+  reference belongs to no lab: its ``genome_visibility`` is ``'suite'`` and
+  every signed-in member may view it. Tracks an administrator adds to it are
+  ``'suite'`` too; tracks anyone else adds to it follow the track rules above.
+
 Both resolvers answer in terms of the member's *labs* (a member may be in
 more than one), so a member sees a genome or track when any of their labs is
 in the viewable set.
@@ -43,6 +48,15 @@ from typing import Iterable, List, Mapping, Optional, Set
 
 import db
 import labs_reader
+
+
+# Suite references: a genome (and the tracks an administrator adds to it) that
+# belongs to the whole suite rather than to a lab, the way MoClo's reference
+# kits do. Its ``owner_lab`` is SUITE_OWNER, which is never a lab id, and its
+# visibility is SUITE_VISIBILITY: every signed-in member may view it. Only an
+# administrator makes one (genomes.py / tracks.py enforce that).
+SUITE_OWNER = 'suite'
+SUITE_VISIBILITY = 'suite'
 
 
 class PermissionDenied(Exception):
@@ -149,6 +163,8 @@ def can_view_genome(username: str, genome, conn=None) -> bool:
     username = (username or '').strip()
     if not username or genome is None:
         return False
+    if _get(genome, 'genome_visibility') == SUITE_VISIBILITY:
+        return True
     return bool(_member_lab_ids(username) & genome_viewer_labs(genome, conn))
 
 
@@ -210,6 +226,8 @@ def can_view_track(username: str, track, conn=None) -> bool:
         return False
     if _get(track, 'track_status', 'ready') != 'ready':
         return False
+    if _get(track, 'visibility') == SUITE_VISIBILITY:
+        return True
     return bool(_member_lab_ids(username) & track_viewer_labs(track, conn))
 
 

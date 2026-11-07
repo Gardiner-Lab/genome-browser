@@ -33,7 +33,8 @@ Endpoints (all relative to the stripped ``/genome`` mount):
   Genome_Visibility (the Owner_Lab's chair group, else owner-lab-only). Rejects
   an oversize file, an invalid FASTA (with the reason), and an assembly id that
   already exists in the same Owner_Lab. (Requirements 2.3, 2.4, 2.5, 2.6, 2.8,
-  2.9, 12.1, 12.2)
+  2.9, 12.1, 12.2) An administrator may send ``suite_reference=true`` to make
+  a suite reference instead: owned by no lab, visible to every member.
 - ``POST /api/genomes/<id>/share`` — share the genome with a whole chair group.
   Only a member of the Owner_Lab may change sharing (403 otherwise, nothing
   changed); the target must be a chair group, never an individual lab, and the
@@ -47,6 +48,7 @@ Endpoints (all relative to the stripped ``/genome`` mount):
   it, and only this genome is affected. (Requirements 12.5, 12.6, 12.7)
 """
 
+import gzip
 import os
 import sqlite3
 import uuid
@@ -58,6 +60,7 @@ import db
 import identity
 import labs_reader
 import readers
+import serving
 
 # The FASTA upload ceiling (Requirement 2.4): a custom Reference_Genome may be
 # no larger than 4 GB. Enforced here in the app so the limit holds regardless
@@ -102,11 +105,22 @@ def register_genomes(app: Flask) -> None:
         conn = db.connect(current_app.config['DATA_ROOT'] / 'genome.db')
         try:
             rows = conn.execute(
-                'SELECT id, name, assembly_id, owner_lab, genome_visibility '
-                'FROM reference_genomes ORDER BY name COLLATE NOCASE, id').fetchall()
+                'SELECT g.id, g.name, g.assembly_id, g.owner_lab, '
+                'g.genome_visibility, '
+                '(SELECT COUNT(*) FROM chrom_sizes c WHERE c.genome_id = g.id) '
+                '  AS chromosome_count, '
+                '(SELECT COALESCE(SUM(length_bp), 0) FROM chrom_sizes c '
+                '  WHERE c.genome_id = g.id) AS length_bp '
+                'FROM reference_genomes g '
+                'ORDER BY g.name COLLATE NOCASE, g.id').fetchall()
+            # The landing page shows what each genome is and whose it is:
+            # ``suite`` marks a suite reference every member sees.
             genomes = [
                 {'id': row['id'], 'name': row['name'],
-                 'assembly_id': row['assembly_id']}
+                 'assembly_id': row['assembly_id'],
+                 'suite': row['genome_visibility'] == access.SUITE_VISIBILITY,
+                 'chromosome_count': int(row['chromosome_count']),
+                 'length_bp': int(row['length_bp'])}
                 for row in rows
                 if access.can_view_genome(member, row, conn)
             ]
@@ -136,7 +150,17 @@ def register_genomes(app: Flask) -> None:
         """
         member = identity.require_member()
 
-        owner_lab = labs_reader.current_lab(member)
+        # A suite reference belongs to the whole suite, not a lab, and only an
+        # administrator may make one; it needs no lab of the uploader's.
+        suite_reference = _truthy(request.form.get('suite_reference'))
+        if suite_reference:
+            if not identity.is_admin(member):
+                return jsonify({
+                    'error': 'Only an administrator can add a suite '
+                             'reference genome.'}), 403
+            owner_lab = access.SUITE_OWNER
+        else:
+            owner_lab = labs_reader.current_lab(member)
         if not owner_lab:
             return jsonify({
                 'error': 'You are not a member of any lab, so there is no '
@@ -164,7 +188,7 @@ def register_genomes(app: Flask) -> None:
             if _assembly_exists(conn, owner_lab, assembly_id):
                 return jsonify({
                     'error': f'An assembly with identifier "{assembly_id}" '
-                             f'already exists for your lab.'}), 409
+                             f'already exists for {"the suite" if suite_reference else "your lab"}.'}), 409
 
             # Stream the body to a temp file while enforcing the 4 GB ceiling,
             # so an oversize file is rejected without being read into memory
@@ -181,6 +205,27 @@ def register_genomes(app: Flask) -> None:
                     'error': 'The uploaded file exceeds the maximum allowed '
                              'size of 4 GB.'}), 413
 
+            # A gzipped FASTA (as most are published) is unpacked, under the
+            # same 4 GB ceiling for what it unpacks to.
+            if _is_gzip(fasta_path):
+                packed = fasta_path.with_name('upload.fasta.gz')
+                fasta_path.replace(packed)
+                try:
+                    with gzip.open(packed, 'rb') as source:
+                        oversize = _stream_to_file(source, fasta_path,
+                                                   MAX_FASTA_BYTES)
+                except (OSError, EOFError) as exc:
+                    _cleanup_dir(genome_dir)
+                    return jsonify({'error': f'The file could not be '
+                                             f'unpacked: {exc}.'}), 400
+                finally:
+                    packed.unlink(missing_ok=True)
+                if oversize:
+                    _cleanup_dir(genome_dir)
+                    return jsonify({
+                        'error': 'The FASTA unpacks to more than the maximum '
+                                 'allowed size of 4 GB.'}), 413
+
             # Validate the FASTA (Requirement 2.5). FASTA is ASCII; decode
             # leniently so a stray byte surfaces as a validation reason rather
             # than a decode crash.
@@ -190,7 +235,8 @@ def register_genomes(app: Flask) -> None:
                 _cleanup_dir(genome_dir)
                 return jsonify({'error': result.reason}), 400
 
-            visibility = _default_visibility(owner_lab)
+            visibility = (access.SUITE_VISIBILITY if suite_reference
+                          else _default_visibility(owner_lab))
 
             try:
                 _store_genome(conn, genome_id, name, assembly_id, owner_lab,
@@ -203,9 +249,13 @@ def register_genomes(app: Flask) -> None:
                 _cleanup_dir(genome_dir)
                 return jsonify({
                     'error': f'An assembly with identifier "{assembly_id}" '
-                             f'already exists for your lab.'}), 409
+                             f'already exists for {"the suite" if suite_reference else "your lab"}.'}), 409
         finally:
             conn.close()
+
+        # Index the sequence for the viewer now (serving.py); if samtools is
+        # missing, the first view does it instead.
+        serving.prepare_reference(fasta_path)
 
         body = {
             'id': genome_id,
@@ -424,6 +474,15 @@ def _assembly_exists(conn: sqlite3.Connection, owner_lab: str,
         'SELECT 1 FROM reference_genomes WHERE owner_lab = ? AND assembly_id = ?',
         (owner_lab, assembly_id)).fetchone()
     return row is not None
+
+
+def _is_gzip(path) -> bool:
+    with open(path, 'rb') as handle:
+        return handle.read(2) == b'\x1f\x8b'
+
+
+def _truthy(value) -> bool:
+    return (value or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 def _default_visibility(owner_lab: str) -> str:

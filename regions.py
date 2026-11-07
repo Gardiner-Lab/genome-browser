@@ -40,6 +40,7 @@ from flask import Flask, current_app, jsonify, request
 
 import access
 import db
+import feature_index
 import identity
 import locus as locus_math
 import readers
@@ -233,26 +234,25 @@ def _feature_overlaps(track_type: str, file_path: Optional[str],
     ``feature.end > window.start``. A missing or unreadable file yields an empty
     list, so the lane renders empty rather than erroring.
     """
-    if not file_path:
+    if not file_path or track_type not in ('bed', 'gff'):
         return []
     path = Path(file_path)
     if not path.exists():
         return []
-    try:
-        text = path.read_text(encoding='utf-8', errors='replace')
-    except OSError:
-        return []
 
-    intervals = _scan_features(track_type, text)
-    out: List[Dict[str, object]] = []
-    for chrom, start, end, name in intervals:
-        if chrom != window.chrom:
-            continue
-        if start < window.end and end > window.start:
-            out.append({'chrom': chrom, 'start': start, 'end': end,
-                        'name': name})
-    out.sort(key=lambda f: (f['start'], f['end']))
-    return out
+    # Answered from the track's feature index (feature_index.py), built on
+    # upload or on this first read, rather than by parsing the whole file.
+    found = feature_index.overlapping(
+        path, feature_parser(track_type), window.chrom, window.start,
+        window.end)
+    return found if found is not None else []
+
+
+def feature_parser(track_type: str):
+    """The line parser for a feature track type, for :mod:`feature_index`."""
+    if track_type == 'bed':
+        return scan_bed_details
+    return scan_gff_details
 
 
 def _scan_features(track_type: str, text: str
@@ -274,11 +274,41 @@ def _scan_features(track_type: str, text: str
     return []
 
 
-def _scan_bed_features(text: str) -> List[Tuple[str, int, int, str]]:
+def _lines(text):
+    """A body's lines: a whole string is split, an open file is iterated."""
+    return readers.split_lines(text) if isinstance(text, str) else text
+
+
+def _scan_bed_features(text) -> List[Tuple[str, int, int, str]]:
     """Parse BED ``chrom start end [name ...]`` (0-based half-open) rows."""
-    features: List[Tuple[str, int, int, str]] = []
-    for raw in text.splitlines():
-        line = raw.rstrip('\n')
+    return [f[:4] for f in scan_bed_details(text)]
+
+
+def _scan_gff_features(text) -> List[Tuple[str, int, int, str]]:
+    """
+    Parse GFF/GFF3 features (1-based inclusive) into 0-based half-open tuples.
+
+    Columns are ``seqid source type start end score strand phase attributes``;
+    the 1-based inclusive ``start``/``end`` become a 0-based half-open window
+    (``start-1`` .. ``end``). A ``Name=``/``ID=`` attribute, when present, is
+    used as the feature name.
+    """
+    return [f[:4] for f in scan_gff_details(text)]
+
+
+# (chrom, start, end, name, type, strand): strand is 1, -1 or 0 (unknown).
+Detail = Tuple[str, int, int, str, str, int]
+
+
+def _strand(value: str) -> int:
+    return 1 if value == '+' else -1 if value == '-' else 0
+
+
+def scan_bed_details(text) -> List[Detail]:
+    """BED rows with the strand (column 6) when there is one; the type is ``region``."""
+    features: List[Detail] = []
+    for raw in _lines(text):
+        line = raw.rstrip('\r\n')
         if _is_comment(line):
             continue
         fields = line.split('\t') if '\t' in line else line.split()
@@ -289,22 +319,16 @@ def _scan_bed_features(text: str) -> List[Tuple[str, int, int, str]]:
         if start is None or end is None:
             continue
         name = fields[3] if len(fields) >= 4 else ''
-        features.append((fields[0], start, end, name))
+        strand = _strand(fields[5]) if len(fields) >= 6 else 0
+        features.append((fields[0], start, end, name, 'region', strand))
     return features
 
 
-def _scan_gff_features(text: str) -> List[Tuple[str, int, int, str]]:
-    """
-    Parse GFF/GFF3 features (1-based inclusive) into 0-based half-open tuples.
-
-    Columns are ``seqid source type start end score strand phase attributes``;
-    the 1-based inclusive ``start``/``end`` become a 0-based half-open window
-    (``start-1`` .. ``end``). A ``Name=``/``ID=`` attribute, when present, is
-    used as the feature name.
-    """
-    features: List[Tuple[str, int, int, str]] = []
-    for raw in text.splitlines():
-        line = raw.rstrip('\n')
+def scan_gff_details(text) -> List[Detail]:
+    """GFF rows with their feature type (column 3) and strand (column 7)."""
+    features: List[Detail] = []
+    for raw in _lines(text):
+        line = raw.rstrip('\r\n')
         if _is_comment(line):
             continue
         fields = line.split('\t') if '\t' in line else line.split()
@@ -315,7 +339,8 @@ def _scan_gff_features(text: str) -> List[Tuple[str, int, int, str]]:
         if start is None or end is None:
             continue
         name = _gff_name(fields[8]) if len(fields) >= 9 else ''
-        features.append((fields[0], start - 1, end, name))
+        strand = _strand(fields[6]) if len(fields) >= 7 else 0
+        features.append((fields[0], start - 1, end, name, fields[2], strand))
     return features
 
 

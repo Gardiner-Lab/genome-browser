@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   error         TEXT,                      -- failure reason when track_status='failed'
   file_path     TEXT,                      -- stored BigWig/feature file; NULL until ready
   created_by    TEXT NOT NULL,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  chrom_check   TEXT                       -- JSON: chromosome names renamed / not in the genome
 );
 
 -- Per-track sharing: specific labs OR the owner lab's chair group (Req 7)

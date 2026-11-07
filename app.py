@@ -30,11 +30,11 @@ from figures import register_figures
 from genomes import register_genomes
 from tracks import register_tracks
 from regions import register_regions
-from notebook import register_notebook
+from serving import register_serving
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.3.0'
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,8 @@ class Config:
     SUITE_DATABASE_PATH = Path(os.environ.get('SUITE_DATABASE_PATH', '/suite/suite.db'))
     MOCLO_DB = Path(os.environ.get('MOCLO_DB', '/moclo/moclo.db'))
 
-    # The other tools, for tag validation, links, and direct-to-notebook export.
+    # The other tools, for tag validation and links (the page sends figures to the
+    # notebook and sequences to the editor from the browser, as the member).
     NOTEBOOK_URL = os.environ.get('NOTEBOOK_URL', '/notebook')
     MOCLO_URL = os.environ.get('MOCLO_URL', '/')
     EDITOR_URL = os.environ.get('EDITOR_URL', '/editor')
@@ -113,9 +114,9 @@ def create_app(config: Config = None) -> Flask:
     register_tracks(app)
     register_figures(app)
     register_regions(app)
-    register_notebook(app)
     register_tags(app)
     register_views(app)
+    register_serving(app)
     return app
 
 

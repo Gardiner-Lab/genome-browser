@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sequence Editor">
+  <title>Sequence Editor</title>
+  
+  <circle cx="32" cy="33" r="18" fill="none" stroke="#8b5a2b" stroke-width="4.2"/><path d="M14.27 29.87A18 18 0 0 1 36.66 15.61" fill="none" stroke="#2f8f46" stroke-width="7" stroke-linecap="butt"/><path d="M45.35 17.94L31.41 19.86L34.23 9.31Z" fill="#2f8f46"/><path d="M20.72 37.10L9.45 41.21" stroke="#8b5a2b" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

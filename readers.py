@@ -83,6 +83,23 @@ CONVERSION_FORMATS = frozenset({'bam', 'wig'})
 FASTA_EXTENSIONS = ('.fa', '.fasta', '.fna', '.fsa')
 
 
+def split_lines(text: str) -> List[str]:
+    """
+    A file body's lines, split on newlines only.
+
+    ``str.splitlines`` also breaks on form feeds, the ASCII separators
+    (0x1C-0x1E), NEL and the Unicode line/paragraph separators, all of which
+    can sit inside a GFF attribute: Araport11's note on AT5G64510 carries a
+    0x1E, and split there its tail read as a feature on a chromosome "c".
+    Every format read here is newline-delimited, so only a newline (with an
+    optional carriage return before it) ends a line.
+    """
+    lines = text.split('\n')
+    if lines and lines[-1] == '':
+        lines.pop()
+    return [line[:-1] if line.endswith('\r') else line for line in lines]
+
+
 def detect_format(filename: str) -> Optional[str]:
     """
     Map an uploaded track filename to a supported format key, or None.
@@ -236,7 +253,7 @@ def parse_fasta(text: str) -> FastaResult:
         header, length, seen_sequence = None, 0, False
         return None
 
-    for raw in text.splitlines():
+    for raw in split_lines(text):
         line = raw.strip()
         if line == '':
             continue  # blank lines separate records / pad a file harmlessly
@@ -340,7 +357,7 @@ def scan_bed_intervals(text: str) -> HeaderResult:
     is still caught) but contributes no extent.
     """
     extents: Dict[str, int] = {}
-    for raw in text.splitlines():
+    for raw in split_lines(text):
         line = raw.rstrip('\n')
         if _is_feature_comment(line):
             continue
@@ -365,7 +382,7 @@ def scan_gff_intervals(text: str) -> HeaderResult:
     honoured as an extent; all other ``##``/``#`` lines and blanks are skipped.
     """
     extents: Dict[str, int] = {}
-    for raw in text.splitlines():
+    for raw in split_lines(text):
         line = raw.rstrip('\n')
         if line.startswith('##sequence-region'):
             parts = line.split()
@@ -425,7 +442,7 @@ def scan_wig_chroms(text: str) -> HeaderResult:
     span = 1
     position = 0
 
-    for raw in text.splitlines():
+    for raw in split_lines(text):
         line = raw.strip()
         if line == '' or line.startswith('#') or line.startswith('track '):
             continue
@@ -514,7 +531,7 @@ def parse_bam_header_text(header_text: str) -> HeaderResult:
     tests feed it a captured header directly.
     """
     lengths: Dict[str, int] = {}
-    for raw in header_text.splitlines():
+    for raw in split_lines(header_text):
         if not raw.startswith('@SQ'):
             continue
         name: Optional[str] = None

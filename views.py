@@ -46,6 +46,7 @@ registrars so the app factory stays a thin wiring layer.
 """
 
 import json
+from html import escape
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -57,6 +58,7 @@ import access
 import db
 import identity
 import locus as locus_math
+import pages
 
 # The vendored client assets live beside this module in ``genome/static/``.
 # app.py built the app with static_folder=None, so this module serves them.
@@ -86,6 +88,20 @@ def register_views(app: Flask) -> None:
         data it loads goes through the authenticated API endpoints.
         """
         return Response(_browser_html(_static_prefix()), mimetype='text/html')
+
+    @app.route('/help')
+    def help_page():
+        """How to use the Genome Browser (``/genome/help``), like every tool's."""
+        prefix = _static_prefix()
+        return Response(pages.help_html(prefix, _mount(prefix)), mimetype='text/html')
+
+    @app.route('/about')
+    def about_page():
+        """What the Genome Browser is (``/genome/about``), with its version."""
+        from app import APP_VERSION  # the factory's module; imported here, not at load
+        prefix = _static_prefix()
+        return Response(pages.about_html(prefix, _mount(prefix), APP_VERSION),
+                        mimetype='text/html')
 
     @app.route('/static/<path:asset>')
     def static_asset(asset):
@@ -421,76 +437,368 @@ def _static_prefix() -> str:
     return f'{prefix}/static' if prefix else '/static'
 
 
+def _mount(static_prefix: str) -> str:
+    """Where the tool is mounted (``/genome``), from its asset prefix."""
+    return static_prefix[:-len('/static')] if static_prefix.endswith('/static') else ''
+
+
 def _browser_html(static_prefix: str) -> str:
     """
-    The self-contained igv.js browser page HTML.
+    The Genome Browser page: the landing page and the browser in one shell.
 
-    References the vendored ``{static_prefix}/igv.min.js`` (browser-visible
-    ``/genome/static/igv.min.js``) rather than a CDN, so the suite has no
-    outbound dependency at runtime. It mounts an IGV container and boots a
-    browser on it; if that script does not load, a small inline note says so
-    instead of leaving an empty page. The data the browser loads comes through
-    the authenticated API endpoints under the same ``/genome`` mount.
+    With no query it shows the landing page, where a member chooses a genome,
+    the tracks to show and where to start; ``?genome=<id>`` opens igv.js on
+    that genome with the member's saved view. The behaviour is in
+    ``static/browser.js`` and the layout in ``static/browser.css``, over the
+    suite's look (``static/trellis/``). igv.js is the vendored
+    ``{static_prefix}/igv.min.js``, never a CDN, so the suite has no outbound
+    dependency at runtime; if it does not load, a note says so.
     """
-    igv_src = f'{static_prefix}/igv.min.js'
+    prefix = escape(_mount(static_prefix))
+    static = escape(static_prefix)
+    editor = escape(str(current_app.config.get('EDITOR_URL') or '').rstrip('/'))
+    notebook = escape(str(current_app.config.get('NOTEBOOK_URL') or '').rstrip('/'))
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Genome Browser</title>
-  <style>
-    :root {{ color-scheme: light dark; }}
-    html, body {{ margin: 0; height: 100%; font-family: system-ui, sans-serif; }}
-    header {{ padding: 0.75rem 1rem; border-bottom: 1px solid #ccc; }}
-    header h1 {{ font-size: 1.1rem; margin: 0; }}
-    #igv-container {{ min-height: 70vh; }}
-    .vendor-note {{
-      margin: 1rem; padding: 0.75rem 1rem; border: 1px solid #c9a227;
-      background: #fff8e1; color: #5f4b00; border-radius: 6px; font-size: 0.9rem;
-    }}
-    .vendor-note code {{ font-family: ui-monospace, monospace; }}
-    .vendor-note[hidden] {{ display: none; }}
-  </style>
+  <title>Genome Browser · Trellis Tools</title>
+  <link rel="icon" href="{static}/trellis/genome.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{static}/trellis/trellis.css">
+  <link rel="stylesheet" href="{static}/browser.css">
 </head>
-<body>
-  <header>
-    <h1>Genome Browser</h1>
+<body class="tt" data-prefix="{prefix}" data-editor="{editor}" data-notebook="{notebook}">
+  <header class="tt-bar">
+    <a class="tt-home" href="/"><img src="{static}/trellis/trellis.svg" alt=""><span>Trellis Tools</span></a>
+    <a class="tt-module" href="{prefix}/"><img src="{static}/trellis/genome.svg" alt="">Genome Browser</a>
+    <span class="tt-sub" id="crumb" hidden></span>
+    <nav class="tt-links">
+      <a href="{prefix}/help">Help</a>
+      <a href="{prefix}/about">About</a>
+    </nav>
+    <span class="tt-user" id="user"></span>
+    <a class="tt-logout" href="/account/logout">Log out</a>
   </header>
 
   <noscript>
-    <p class="vendor-note">This browser requires JavaScript to render tracks.</p>
+    <p class="vendor-note">The Genome Browser needs JavaScript to show genomes and tracks.</p>
   </noscript>
 
-  <div id="vendor-note" class="vendor-note" hidden>
-    The IGV viewer (<code>igv.min.js</code>) did not load, so the interactive
-    browser cannot start. It is served from <code>/genome/static/</code> and
-    never fetched from the internet, so this means the file is missing from the
-    image. The API endpoints under <code>/genome/api/</code> work regardless.
-  </div>
+  <main id="choose" class="gb-page" hidden>
+    <div class="gb-intro">
+      <h1>Choose what to show</h1>
+      <p>Pick a reference genome, the tracks to lay over it, and where to start. The browser
+         remembers your view of each genome, so it opens where you left off next time.</p>
+    </div>
 
-  <div id="igv-container"
-       role="application"
-       aria-label="Interactive genome browser"></div>
+    <aside class="gb-guide" id="intro-guide" hidden aria-labelledby="intro-guide-title">
+      <h2 id="intro-guide-title">New to the Genome Browser?</h2>
+      <ol>
+        <li><b>Choose a genome</b> below, tick the <b>tracks</b> to show on it, and <b>open</b> it.</li>
+        <li>In the browser, <b>drag</b> to move along and use <b>+ / &minus;</b> to zoom. <b>Click</b> a gene
+            for its details.</li>
+        <li><b>Double-click</b> a gene, or <b>Shift-drag</b> across any stretch, to select its sequence; then
+            open it in the Sequence Editor, BLAST it, or download it as FASTA.</li>
+        <li>Your own data goes in with <b>+ Add tracks</b>, one file or many at once (or <b>+ Add a genome</b> for a new assembly).</li>
+      </ol>
+      <div class="gb-guide-actions">
+        <a class="tt-btn" href="{prefix}/help">Read the help</a>
+        <button type="button" class="tt-btn primary" id="intro-dismiss">Got it</button>
+      </div>
+    </aside>
 
-  <script src="{igv_src}"
+    <form id="choose-form" novalidate>
+      <section class="gb-step" aria-labelledby="step-genome-title">
+        <div class="gb-step-head">
+          <span class="gb-step-num" aria-hidden="true">1</span>
+          <h2 id="step-genome-title">Genome</h2>
+          <a class="gb-help-link" href="{prefix}/help#genome" title="About genomes and adding one">?</a>
+          <span class="gb-actions">
+            <button type="button" class="tt-btn" id="add-genome">+ Add a genome</button>
+          </span>
+        </div>
+        <div id="genome-list" class="gb-genomes" role="group" aria-labelledby="step-genome-title"></div>
+      </section>
+
+      <section class="gb-step" id="step-tracks" aria-labelledby="step-tracks-title" hidden>
+        <div class="gb-step-head">
+          <span class="gb-step-num" aria-hidden="true">2</span>
+          <h2 id="step-tracks-title">Tracks</h2>
+          <a class="gb-help-link" href="{prefix}/help#track" title="About tracks and adding one">?</a>
+          <span class="gb-hint">shown in this order, top to bottom</span>
+          <span class="gb-actions">
+            <span id="track-actions">
+              <button type="button" class="gb-link" id="tracks-all">Select all</button>
+              <button type="button" class="gb-link" id="tracks-none">Select none</button>
+            </span>
+            <button type="button" class="tt-btn" id="add-track">+ Add tracks</button>
+          </span>
+        </div>
+        <ul id="track-list" class="gb-tracks"></ul>
+        <ul id="pending-list" class="gb-pending" aria-live="polite"></ul>
+      </section>
+
+      <section class="gb-step" id="step-locus" aria-labelledby="step-locus-title" hidden>
+        <div class="gb-step-head">
+          <span class="gb-step-num" aria-hidden="true">3</span>
+          <h2 id="step-locus-title">Start at</h2>
+          <span class="gb-hint">a chromosome, or a region such as Chr1:3,600-9,000</span>
+        </div>
+        <div class="gb-locus">
+          <input id="locus" name="locus" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Chr1:1-100,000" aria-labelledby="step-locus-title"
+                 aria-describedby="locus-error">
+        </div>
+        <p id="locus-error" class="gb-error" role="alert" hidden></p>
+        <div id="chrom-list" class="gb-chroms" aria-label="Chromosomes"></div>
+      </section>
+
+      <div class="gb-open" id="open-row" hidden>
+        <button type="submit" class="tt-btn primary">Open in browser</button>
+        <span class="gb-hint" id="open-hint"></span>
+      </div>
+    </form>
+  </main>
+
+  <section id="view" class="gb-view" hidden>
+    <div class="gb-toolbar">
+      <h1 id="view-title"></h1>
+      <span class="gb-hint" id="view-hint"></span>
+      <span class="gb-spacer"></span>
+      <span class="gb-saved" id="saved" aria-live="polite"></span>
+      <button type="button" class="tt-btn" id="tracks-toggle" aria-expanded="false" aria-controls="tracks-panel"
+              title="Change the height, colour, display or scale of several tracks at once">Track settings</button>
+      <button type="button" class="tt-btn" id="figure-open"
+              title="Save this view as a figure: to your Lab Notebook as a page under today, or as an SVG file">Figure</button>
+      <button type="button" class="tt-btn" id="controls-toggle" aria-expanded="false" aria-controls="controls">
+        <span aria-hidden="true">?</span> Controls</button>
+      <button type="button" class="tt-btn" id="change" title="Back to choosing the genome, tracks and where to start">Change genome or tracks</button>
+    </div>
+    <aside class="gb-tracks-panel" id="tracks-panel" hidden aria-labelledby="tracks-panel-title">
+      <div class="gb-controls-head">
+        <h2 id="tracks-panel-title">Track settings</h2>
+        <span class="gb-hint">Tick the tracks to change, then set them all at once. Kept with your view.</span>
+        <button type="button" class="gb-link" id="tracks-panel-close">Done</button>
+      </div>
+      <div class="gb-tp-body">
+        <div class="gb-tp-list">
+          <div class="gb-tp-list-head">
+            <button type="button" class="gb-link" id="tp-all">Select all</button>
+            <button type="button" class="gb-link" id="tp-none">Select none</button>
+            <span class="gb-hint" id="tp-count"></span>
+          </div>
+          <ul id="tp-tracks"></ul>
+        </div>
+        <div class="gb-tp-controls" id="tp-controls">
+          <div class="gb-tp-row">
+            <span class="gb-tp-label">Height</span>
+            <span class="gb-tp-chips">
+              <button type="button" class="gb-chip" data-height="40">Short</button>
+              <button type="button" class="gb-chip" data-height="80">Medium</button>
+              <button type="button" class="gb-chip" data-height="160">Tall</button>
+            </span>
+            <form id="tp-height-form" class="gb-tp-inline">
+              <input id="tp-height" type="number" min="15" max="1000" step="5" placeholder="px" aria-label="Height in pixels">
+              <button type="submit" class="tt-btn">Set</button>
+            </form>
+          </div>
+          <div class="gb-tp-row">
+            <span class="gb-tp-label">Colour</span>
+            <span class="gb-tp-swatches" id="tp-swatches"></span>
+            <label class="gb-tp-inline" title="Any colour">
+              <input id="tp-color" type="color" value="#2b8040" aria-label="Choose any colour">
+            </label>
+            <button type="button" class="gb-link" id="tp-color-reset">Original colours</button>
+          </div>
+          <div class="gb-tp-row" id="tp-display-row">
+            <span class="gb-tp-label">Genes</span>
+            <span class="gb-tp-chips">
+              <button type="button" class="gb-chip" data-display="EXPANDED" title="Every transcript on its own row">Expanded</button>
+              <button type="button" class="gb-chip" data-display="SQUISHED" title="Every transcript, in thin rows">Squished</button>
+              <button type="button" class="gb-chip" data-display="COLLAPSED" title="All on one row">Collapsed</button>
+            </span>
+          </div>
+          <div class="gb-tp-row" id="tp-scale-row">
+            <span class="gb-tp-label">Scale</span>
+            <span class="gb-tp-chips">
+              <button type="button" class="gb-chip" data-scale="auto" title="Each track fits its own data on screen">Each its own</button>
+              <button type="button" class="gb-chip" data-scale="group" title="The ticked tracks share one scale, so their heights compare">Shared</button>
+            </span>
+            <form id="tp-range-form" class="gb-tp-inline" title="A fixed range, the same wherever you look">
+              <input id="tp-min" type="number" step="any" placeholder="min" aria-label="Minimum">
+              <input id="tp-max" type="number" step="any" placeholder="max" aria-label="Maximum">
+              <button type="submit" class="tt-btn">Fix range</button>
+            </form>
+          </div>
+          <div class="gb-tp-row">
+            <span class="gb-tp-label"></span>
+            <button type="button" class="tt-btn danger" id="tp-remove">Remove from view</button>
+          </div>
+          <p class="gb-error" id="tp-error" role="alert" hidden></p>
+        </div>
+      </div>
+    </aside>
+    <aside class="gb-controls" id="controls" hidden aria-labelledby="controls-title">
+      <div class="gb-controls-head">
+        <h2 id="controls-title">Controls</h2>
+        <a href="{prefix}/help#move">Full help</a>
+        <button type="button" class="gb-link" id="controls-close">Got it, hide this</button>
+      </div>
+      <div class="gb-controls-grid">
+        <section>
+          <h3>Moving around</h3>
+          <dl>
+            <dt>Drag the tracks</dt><dd>move along the genome</dd>
+            <dt><b>+</b> / <b>&minus;</b>, slider</dt><dd>zoom in and out</dd>
+            <dt>Box in the toolbar</dt><dd>go to <code>Chr1:3,600-9,000</code> or a chromosome</dd>
+            <dt>Click a feature</dt><dd>its details</dd>
+            <dt>Track settings</dt><dd>height, colour, display or scale of several tracks at once</dd>
+            <dt>⚙ on a track</dt><dd>the same, for one track</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Selecting sequence</h3>
+          <dl>
+            <dt>Double-click a feature</dt><dd>select exactly that gene or transcript</dd>
+            <dt><kbd>Shift</kbd> + drag</dt><dd>select any stretch</dd>
+            <dt>Select region</dt><dd>while on, a plain drag selects</dd>
+            <dt>Type a region</dt><dd>in the bar, then <b>Select</b></dd>
+            <dt><kbd>Esc</kbd></dt><dd>leave Select region, then clear</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Taking it away</h3>
+          <dl>
+            <dt>Open in Sequence Editor</dt><dd>up to 30 kb, with its annotations</dd>
+            <dt>BLAST at NCBI</dt><dd>up to 2 Mb; sends it to NCBI</dd>
+            <dt>Copy sequence</dt><dd>up to 2 Mb</dd>
+            <dt>Download FASTA</dt><dd>any length</dd>
+          </dl>
+          <p class="gb-hint">Minus-strand features are sent reverse-complemented, as they read.</p>
+          <h3>Figures</h3>
+          <dl>
+            <dt>Figure</dt><dd>save the view to your Lab Notebook, under today, or download it as SVG</dd>
+          </dl>
+        </section>
+      </div>
+    </aside>
+    <div id="vendor-note" class="vendor-note" hidden>
+      The IGV viewer (<code>igv.min.js</code>) did not load, so the interactive
+      browser cannot start. It is served from <code>{static}/</code> and
+      never fetched from the internet, so this means the file is missing from the
+      image. The API endpoints under <code>{prefix}/api/</code> work regardless.
+    </div>
+    <div class="gb-selection" id="selection">
+      <div class="gb-select-tools">
+        <button type="button" class="tt-btn gb-mode" id="select-mode" aria-pressed="false"
+                title="While on, dragging across the tracks selects sequence instead of moving along">
+          <span class="gb-mode-icon" aria-hidden="true"></span>Select region</button>
+        <form id="select-form" class="gb-select-form" novalidate>
+          <input id="select-locus" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="or type Chr1:3,631-5,899" aria-label="Select a region by its coordinates">
+          <button type="submit" class="tt-btn">Select</button>
+        </form>
+      </div>
+      <div class="gb-selection-text" id="selection-text" aria-live="polite"></div>
+      <div class="gb-selection-actions" id="selection-actions" hidden>
+        <button type="button" class="tt-btn primary" id="send-editor"
+                title="Open it as a new sequence in the Sequence Editor, with its annotations (up to 30 kb)">Open in Sequence Editor</button>
+        <button type="button" class="tt-btn" id="send-blast"
+                title="Open NCBI nucleotide BLAST with it filled in (up to 2 Mb). This sends the sequence to NCBI.">BLAST at NCBI</button>
+        <button type="button" class="tt-btn" id="copy-seq"
+                title="Copy the bases to the clipboard (up to 2 Mb)">Copy sequence</button>
+        <button type="button" class="tt-btn" id="save-fasta"
+                title="Download it as a FASTA file, at any length">Download FASTA</button>
+        <button type="button" class="gb-link" id="clear-selection" title="Clear the selection (Esc)">Clear</button>
+      </div>
+      <p class="gb-note" id="selection-note" hidden></p>
+      <p class="gb-error" id="selection-error" role="alert" hidden></p>
+    </div>
+    <div id="drag-band" class="gb-drag-band" hidden></div>
+    <div id="igv-container" role="application" aria-label="Interactive genome browser"></div>
+  </section>
+
+  <dialog id="genome-dialog" class="gb-dialog" aria-labelledby="genome-dialog-title">
+    <form method="dialog" id="genome-form" novalidate>
+      <h2 id="genome-dialog-title">Add a genome</h2>
+      <p class="gb-hint">A reference sequence as FASTA (.fa, .fasta, .fna, .fsa, gzipped or not), up
+        to 4 GB. <span id="genome-owner"></span>
+        <a href="{prefix}/help#genome" target="_blank" rel="noopener">How adding a genome works</a></p>
+      <label class="gb-field">Name
+        <input name="name" required maxlength="200" placeholder="Arabidopsis thaliana Col-0 (TAIR10)">
+      </label>
+      <label class="gb-field">Assembly
+        <input name="assembly_id" required maxlength="100" placeholder="TAIR10">
+        <span class="gb-hint">the assembly's identifier; tracks name its chromosomes</span>
+      </label>
+      <label class="gb-field">FASTA file
+        <input name="file" type="file" required accept=".fa,.fasta,.fna,.fsa,.gz">
+      </label>
+      <label class="gb-check" id="suite-reference-row" hidden>
+        <input name="suite_reference" type="checkbox" value="true">
+        <span>Share with everyone in the suite (a suite reference genome, owned by no lab)</span>
+      </label>
+      <div class="gb-progress" hidden><progress max="100" value="0"></progress><span></span></div>
+      <p class="gb-error" role="alert" hidden></p>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" value="cancel" data-close>Cancel</button>
+        <button type="submit" class="tt-btn primary">Upload genome</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="figure-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="figure-dialog-title">
+    <form method="dialog" id="figure-form" novalidate>
+      <h2 id="figure-dialog-title">Save this view as a figure</h2>
+      <p class="gb-hint">Exactly what is on screen: the tracks, the position and any selection.</p>
+      <div class="gb-figure-preview"><img id="figure-preview" alt="The figure as it will be saved"></div>
+      <label class="gb-field">Page title
+        <input name="title" maxlength="200">
+      </label>
+      <label class="gb-field">Note <span class="gb-hint">(optional: what it shows, which experiment)</span>
+        <textarea name="note" rows="3" maxlength="4000"></textarea>
+      </label>
+      <p class="gb-hint" id="figure-where"></p>
+      <div class="gb-notice" id="figure-done" hidden></div>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" id="figure-svg">Download SVG</button>
+        <span class="gb-spacer"></span>
+        <button type="button" class="tt-btn" id="figure-close">Close</button>
+        <button type="submit" class="tt-btn primary" id="figure-save">Save to Lab Notebook</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="track-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="track-dialog-title">
+    <form method="dialog" id="track-form" novalidate>
+      <h2 id="track-dialog-title">Add tracks</h2>
+      <p class="gb-hint">To <strong id="track-genome-name"></strong>. <span id="track-owner"></span></p>
+      <div class="gb-drop" id="track-drop">
+        <input type="file" id="track-files" multiple hidden
+               accept=".gff,.gff3,.bed,.bw,.bigwig,.bam,.wig,.wiggle,.bedgraph,.bg,.gz">
+        <p><b>Drop files here</b>, or <button type="button" class="gb-link" id="track-browse">choose files</button>:
+          one or as many as you like.</p>
+        <p class="gb-hint">GFF or BED (features), BigWig (coverage), or BAM, wig and bedGraph, which are
+          converted to coverage on the server; gzipped is fine. Each file's chromosome names are checked
+          against the genome's, and ones written another way (1, chr1, Chr1) are renamed to match.
+          <a href="{prefix}/help#track" target="_blank" rel="noopener">More on tracks</a></p>
+      </div>
+      <ul class="gb-uploads" id="track-rows" aria-live="polite"></ul>
+      <p class="gb-upload-summary" id="track-summary" role="status" hidden></p>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" id="track-cancel">Cancel</button>
+        <button type="submit" class="tt-btn primary" id="track-submit" disabled>Upload</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="{static}/igv.min.js"
           onerror="document.getElementById('vendor-note').hidden = false;"></script>
-  <script>
-    (function () {{
-      var container = document.getElementById('igv-container');
-      // igv.js is vendored at {igv_src}; when it is present it exposes a global
-      // `igv`. Until then, show the vendor note and leave the container empty.
-      if (typeof igv === 'undefined' || !igv || typeof igv.createBrowser !== 'function') {{
-        document.getElementById('vendor-note').hidden = false;
-        return;
-      }}
-      igv.createBrowser(container, {{ genome: null }}).then(function (browser) {{
-        window.__genomeBrowser = browser;
-      }}).catch(function (err) {{
-        console.error('Failed to start the genome browser', err);
-      }});
-    }})();
-  </script>
+  <script src="{static}/trellis/modules.js" defer></script>
+  <script src="{static}/browser.js"></script>
 </body>
 </html>
 """

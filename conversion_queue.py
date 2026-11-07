@@ -14,8 +14,8 @@ member's session (Requirements 13.3, 13.17, 13.20).
 The module is named ``conversion_queue`` rather than ``queue`` on purpose: the
 module runs with its own directory on ``sys.path`` (flat imports like ``import
 db``), so a file named ``queue.py`` here would shadow the Python standard
-library's ``queue`` module that ``requests``/``urllib3`` (pulled in by
-``notebook.py``) import, breaking the app at startup. ``conversion_queue`` keeps
+library's ``queue`` module that ``requests``/``urllib3`` import, breaking the
+app at startup. ``conversion_queue`` keeps
 the durable-queue logic in its own module without that collision.
 
 Two properties make this a correct queue rather than just a table:

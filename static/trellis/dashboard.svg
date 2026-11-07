@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dashboard">
+  <title>Dashboard</title>
+  <defs><mask id="veins" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64"><rect width="64" height="64" fill="white"/><path transform="translate(17.5 24.5) rotate(-35) scale(.85)" d="M1.5 0H10" stroke="black" stroke-width=".9" stroke-linecap="round"/></mask></defs>
+  <circle cx="22" cy="22" r="11" fill="none" stroke="#8b5a2b" stroke-width="4.2"/><path d="M30 30L52 52M41 41L46 36M47 47L51.5 42.5" stroke="#8b5a2b" stroke-width="4.2" stroke-linecap="round"/><g mask="url(#veins)"><path transform="translate(17.5 24.5) rotate(-35) scale(.85)" d="M0 0C3-4.4 9.4-5 12.6 0C9.4 5 3 4.4 0 0Z" fill="#2f8f46"/></g>
+</svg>

@@ -45,6 +45,7 @@ app and the worker coordinate through the one WAL database, as everywhere else
 in the module.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -52,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+import chrom_names
 import db
 import readers
 from align import check_alignment
@@ -228,6 +230,38 @@ def _run_wig_to_bigwig(input_wig, chrom_sizes_path, out_bigwig) -> None:
           str(out_bigwig)], 'wigToBigWig')
 
 
+def _run_samtools_reheader(input_bam, out_bam, renames: Dict[str, str]) -> None:
+    """
+    Copy a BAM with its ``@SQ`` names renamed (``samtools reheader``).
+
+    The header is read with ``samtools view -H``, its ``SN:`` names changed, and
+    written beside the BAM for ``samtools reheader`` to swap in; the reads
+    themselves are untouched.
+    """
+    header_path = Path(out_bam).with_suffix('.header.sam')
+    try:
+        header = subprocess.run(
+            ['samtools', 'view', '-H', str(input_bam)],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ConversionError(f'samtools view -H failed: {exc}') from exc
+    header_path.write_text(chrom_names.rename_sam_header(header, renames),
+                           encoding='utf-8')
+    try:
+        with open(out_bam, 'wb') as out:
+            completed = subprocess.run(
+                ['samtools', 'reheader', str(header_path), str(input_bam)],
+                stdout=out, stderr=subprocess.PIPE)
+        if completed.returncode != 0:
+            raise ConversionError(
+                'samtools reheader failed: '
+                + completed.stderr.decode('utf-8', 'replace').strip())
+    except OSError as exc:
+        raise ConversionError(f'samtools reheader failed: {exc}') from exc
+    finally:
+        header_path.unlink(missing_ok=True)
+
+
 @dataclass
 class Toolchain:
     """
@@ -252,6 +286,7 @@ class Toolchain:
     bedtools_genomecov: Callable[..., None] = _run_bedtools_genomecov
     bedgraph_to_bigwig: Callable[..., None] = _run_bedgraph_to_bigwig
     wig_to_bigwig: Callable[..., None] = _run_wig_to_bigwig
+    samtools_reheader: Callable[..., None] = _run_samtools_reheader
     prefer_bamcoverage: bool = True
 
 
@@ -337,7 +372,10 @@ def convert_job(
         try:
             # 1. Validate the input header against the reference first.
             chrom_sizes = _load_chrom_sizes(db_path, genome_id)
-            _validate_input(kind, input_path, chrom_sizes)
+            match = _validate_input(kind, input_path, chrom_sizes)
+            if match.renames:
+                _rename_input(tools, kind, input_path, match.renames)
+                _record_chrom_check(db_path, track_id, match.report())
 
             # 2. Run the toolchain, producing a BigWig in scratch.
             scratch_bigwig = scratch_dir / f'{track_id}.bw'
@@ -396,11 +434,39 @@ def _validate_input(kind: str, input_path, chrom_sizes: Dict[str, int]) -> None:
     """
     fmt = 'bam' if kind == 'bam' else 'wig' if kind == 'wig' else kind
     header = readers.read_track_header(fmt, str(input_path))
-    result = check_alignment(header, chrom_sizes)
-    if not result.accepted:
-        raise ConversionError(result.error_message
+    match = chrom_names.match_names(header.chroms, chrom_sizes)
+    result = check_alignment(chrom_names.rename_header(header, match),
+                             chrom_sizes)
+    if match.unmatched or not result.accepted:
+        parts = []
+        if match.unmatched:
+            names = ', '.join(match.unmatched)
+            plural = 's' if len(match.unmatched) > 1 else ''
+            parts.append(f'Chromosome/contig name{plural} not found in the '
+                         f'reference genome under any spelling: {names}. The '
+                         f'genome has: {", ".join(chrom_sizes)}.')
+        parts.extend(result.messages)
+        raise ConversionError(' '.join(parts)
                               or 'Conversion input does not align to the '
                                  'reference genome.')
+    return match
+
+
+def _rename_input(tools: 'Toolchain', kind: str, input_path: Path,
+                  renames: Dict[str, str]) -> None:
+    """
+    Rewrite the input in place so its chromosome names are the genome's.
+
+    A wig is copied line by line with the names changed; a BAM gets a new
+    header with ``samtools reheader`` (the reads refer to sequences by index,
+    so only the header changes). Runs only when the name check found renames.
+    """
+    renamed = input_path.with_name('renamed-' + input_path.name)
+    if kind == 'wig':
+        chrom_names.rewrite_text_file(input_path, renamed, 'wig', renames)
+    else:
+        tools.samtools_reheader(input_path, renamed, renames)
+    renamed.replace(input_path)
 
 
 def _convert_bam(tools: Toolchain, input_bam, out_bigwig, scratch_dir,
@@ -524,6 +590,17 @@ def _load_chrom_sizes(db_path, genome_id: str) -> Dict[str, int]:
             f'Reference genome {genome_id} has no chromosome sizes to '
             f'validate against.')
     return {row['chrom']: int(row['length_bp']) for row in rows}
+
+
+def _record_chrom_check(db_path, track_id: str, report) -> None:
+    """Keep what the chromosome-name check renamed on the track row."""
+    conn = db.connect(db_path)
+    try:
+        conn.execute('UPDATE tracks SET chrom_check = ? WHERE id = ?',
+                     (json.dumps(report) if report else None, track_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _mark_ready(db_path, track_id: str, file_path: str) -> None:

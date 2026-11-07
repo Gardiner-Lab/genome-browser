@@ -7,9 +7,18 @@ browser.
   that lab's chair group by default.
 - **Tracks** are BigWig, BED or GFF. BAM and wig files are converted to BigWig on the server, so
   only the coverage summary is kept rather than the alignment.
-  - A track is accepted only when **every chromosome name and coordinate matches its reference
-    genome exactly** — a mismatch is refused with the names that disagree, rather than drawn in the
-    wrong place.
+  - **Chromosome names are checked against the reference genome on every upload.** A name that
+    differs only in style is renamed to the genome's own: case, a `chr`/`chrom`/`chromosome`
+    prefix, leading zeros, and the usual organelle spellings (`M`/`MT`/`mito`/`mitochondria`,
+    `C`/`Pt`/`Cp`/`chloroplast`). So Araport11's `Chr1` and `ChrM` land on TAIR10's `1` and
+    `mitochondria`. A name is renamed only when it can mean just one of the genome's chromosomes.
+    What was renamed comes back as `chrom_check` on the upload, the track and its status.
+  - A name the genome doesn't have under any spelling is never guessed at. A coverage track
+    (BigWig, BAM, wig) with one is refused. A BED/GFF is refused only when *none* of its names are
+    in the genome; otherwise it is accepted and `chrom_check` lists the names whose features won't
+    be drawn. Refusals list the genome's chromosome names.
+  - A coordinate past the end of its chromosome is refused for every format, rather than drawn in
+    the wrong place. A gzipped BED/GFF is unpacked on upload.
   - Conversion runs in a single worker with its own CPU and memory limits, pulling from a durable
     on-disk queue, so an accepted job survives a restart and never ties up the web service.
 - **Navigation** is by locus or region, and a view can be exported as an **SVG figure** or sent
@@ -20,6 +29,9 @@ browser.
 - **Who sees what** follows the suite: a genome defaults to its owner lab's chair group, a track to
   its owner lab, and either can be shared further by a member of the owner lab. Administrators see
   all.
+- **Suite reference genomes** belong to the whole suite rather than a lab. An administrator uploads
+  one with `suite_reference=true`, and every member sees it, along with the tracks an
+  administrator adds to it.
 
 ## Running it
 

@@ -1,0 +1,160 @@
+/*
+ * Trellis Tools: the look every module shares.
+ *
+ * The colours are the icons': green for what you do (buttons, links, what is
+ * chosen), brown for structure (the header's marks, secondary buttons), on warm
+ * paper-white with warm greys for text. Each module loads this first, points its
+ * own colour variables at these, and keeps its layout; its icon, not a colour of
+ * its own, says which module it is.
+ *
+ * The one source is the suite's design/trellis.css; design/sync.sh copies it, with
+ * the icons, into each module (app/static/trellis/), so a module looks right on its
+ * own too. Change it here, then sync.
+ */
+:root {
+    /* the palette */
+    /* a shade darker than the icons' #2f8f46, so white on it, and it on white, read easily (WCAG AA) */
+    --tt-green: #2b8040;
+    --tt-green-dark: #226633;
+    --tt-green-ink: #1a5229;
+    --tt-green-soft: #e7f3ea;
+    --tt-green-line: #b9dcc2;
+    --tt-brown: #8b5a2b;
+    --tt-brown-dark: #6b4423;
+    --tt-brown-soft: #f4ece2;
+    --tt-brown-line: #dccbb6;
+    /* each module's own accent: earthy colours beside the brown and green (the landing page's
+       card edges; a module may use its own for small touches) */
+    --tt-moclo: #6b7a1e;      /* moss olive */
+    --tt-editor: #2a7480;     /* deep teal */
+    --tt-notebook: #93680e;   /* ochre (dark enough to read on white) */
+    --tt-seeds: #2b8040;      /* the green */
+    --tt-stocks: #3d6a96;     /* slate blue */
+    --tt-booking: #7a4a8f;    /* plum */
+    --tt-dashboard: #8b5a2b;  /* the brown */
+    --tt-backups: #6f665c;    /* warm grey */
+    /* paper, ink and lines */
+    --tt-bg: #faf8f4;
+    --tt-card: #ffffff;
+    --tt-sunk: #f3efe8;
+    --tt-hover: #f1ece4;
+    --tt-text: #2b2620;
+    --tt-muted: #6f665c;
+    --tt-border: #e6dfd4;
+    --tt-line: #efe9df;
+    /* what goes right and wrong */
+    --tt-ok: #2b8040;
+    --tt-ok-soft: #e7f3ea;
+    --tt-warn: #a15c07;
+    --tt-warn-soft: #fdf3e1;
+    --tt-danger: #b42318;
+    --tt-danger-soft: #fdecea;
+    /* shape and type */
+    --tt-radius: .55rem;
+    --tt-radius-lg: .8rem;
+    --tt-shadow: 0 1px 2px rgba(43, 38, 32, .06), 0 1px 3px rgba(43, 38, 32, .08);
+    --tt-shadow-lg: 0 12px 32px rgba(43, 38, 32, .16);
+    --tt-focus: 0 0 0 3px rgba(47, 143, 70, .25);
+    --tt-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --tt-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --tt-bar-height: 3.25rem;
+    color-scheme: light;
+}
+
+/* --- the page -------------------------------------------------------------
+ * Weightless (:where): these fill in what a module leaves unset; anything it sets itself wins. */
+html { -webkit-text-size-adjust: 100%; }
+body.tt { margin: 0; background: var(--tt-bg); color: var(--tt-text); font-family: var(--tt-font); font-size: 15px; line-height: 1.5; }
+:where(body.tt a) { color: var(--tt-green-dark); }
+:where(body.tt a:hover) { color: var(--tt-green-ink); }
+:where(body.tt :is(button, input, select, textarea)) { font: inherit; }
+:where(body.tt :is(h1, h2, h3)) { letter-spacing: -.01em; }
+:where(body.tt :focus-visible) { outline: none; box-shadow: var(--tt-focus); border-radius: .3rem; }
+body.tt ::selection { background: var(--tt-green-line); }
+
+/* --- the header every module shares --------------------------------------------
+ *  <header class="tt-bar">
+ *    <a class="tt-home" href="/"><img src=".../trellis.svg" alt=""><span>Trellis Tools</span></a>
+ *    <a class="tt-module" href="..."><img src=".../booking.svg" alt="">Booking</a>
+ *    <nav class="tt-tabs"><a class="tt-tab active">...</a></nav>
+ *    <nav class="tt-links"><a>...</a></nav>
+ *    <span class="tt-user">...</span><a class="tt-logout">Log out</a>
+ *  </header>
+ */
+.tt-bar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: .9rem; flex-wrap: wrap;
+    min-height: var(--tt-bar-height); padding: .35rem 1.1rem; background: var(--tt-card);
+    border-bottom: 1px solid var(--tt-border); box-shadow: 0 1px 0 var(--tt-line); font-family: var(--tt-font); }
+.tt-bar a { text-decoration: none; }
+.tt-home { display: inline-flex; align-items: center; gap: .45rem; color: var(--tt-brown-dark) !important; font-weight: 650;
+    font-size: .92rem; padding-right: .9rem; border-right: 1px solid var(--tt-border); }
+.tt-home img { width: 1.6rem; height: 1.6rem; }
+.tt-home:hover { color: var(--tt-brown) !important; }
+.tt-module { display: inline-flex; align-items: center; gap: .5rem; color: var(--tt-text) !important; font-weight: 700; font-size: 1.05rem; }
+.tt-module img { height: 1.6rem; width: auto; }
+.tt-sub { color: var(--tt-muted); font-size: .92rem; margin-left: -.35rem; }
+.tt-sub::before { content: "·"; margin-right: .45rem; color: var(--tt-brown-line); }
+/* The suite's other tools (modules.js): icons in the bar, with their names where there is room. */
+.tt-modules { display: flex; align-items: center; gap: .1rem; padding-left: .7rem; border-left: 1px solid var(--tt-border); }
+.tt-module-link { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .45rem; border-radius: 999px;
+    color: var(--tt-muted) !important; font-size: .85rem; white-space: nowrap; }
+.tt-module-link img { width: 1.15rem; height: 1.15rem; }
+.tt-module-link:hover { background: var(--tt-hover); color: var(--tt-text) !important; }
+.tt-module-link.here { background: var(--tt-green-soft); color: var(--tt-green-ink) !important; font-weight: 600; }
+@media (max-width: 1400px) { .tt-module-link span { display: none; } }
+
+/* The tool's own pages go on a row of their own, under the bar: the top row is the suite (its tools,
+   the dashboard, help, about and who is signed in), the row under it is this tool. */
+.tt-tabs { display: flex; gap: .15rem; flex-wrap: wrap; order: 10; flex: 1 0 100%;
+    margin: .1rem -1.1rem -.35rem; padding: .3rem 1.1rem; border-top: 1px solid var(--tt-line); }
+.tt-tab { color: var(--tt-muted) !important; font-size: .9rem; padding: .32rem .75rem; border-radius: 999px; }
+.tt-tab:hover { background: var(--tt-hover); color: var(--tt-text) !important; }
+.tt-tab.active { background: var(--tt-green-soft); color: var(--tt-green-ink) !important; font-weight: 600; }
+.tt-links { display: flex; gap: .9rem; margin-left: auto; align-items: center; }
+.tt-links a { color: var(--tt-muted) !important; font-size: .88rem; }
+.tt-links a:hover { color: var(--tt-green-dark) !important; }
+.tt-user { color: var(--tt-muted); font-size: .88rem; }
+.tt-links + .tt-user { margin-left: .2rem; }
+/* With the pages on their own row, whoever is signed in still sits at the end of the top row. */
+.tt-tabs + .tt-user, .tt-module + .tt-user, .tt-modules + .tt-user { margin-left: auto; }
+.tt-logout { font-size: .88rem; color: var(--tt-brown-dark) !important; font-weight: 600; }
+.tt-logout:hover { color: var(--tt-brown) !important; }
+.tt-help { font-size: .88rem; color: var(--tt-green-dark) !important; font-weight: 600; }
+@media (max-width: 860px) {
+    .tt-home span, .tt-links { display: none; }
+    .tt-modules { padding-left: .4rem; }
+    .tt-home { padding-right: .6rem; }
+    .tt-user { margin-left: auto; }
+}
+.embedded .tt-bar { display: none; }
+
+/* --- buttons ----------------------------------------------------------------
+ * Opt-in: .tt-btn (.primary, .danger). The modules' own .btn styles keep their meaning (in some
+ * a plain .btn is the main action) and turn the suite's colours through their colour variables. */
+.tt-btn { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; padding: .42rem .9rem;
+    border: 1px solid var(--tt-border); border-radius: var(--tt-radius); background: var(--tt-card); color: var(--tt-text);
+    font-size: .9rem; font-weight: 550; line-height: 1.2; text-decoration: none; cursor: pointer;
+    transition: background .12s, border-color .12s, box-shadow .12s; }
+.tt-btn:hover:not(:disabled) { background: var(--tt-hover); border-color: var(--tt-brown-line); color: var(--tt-text); }
+.tt-btn:disabled { opacity: .5; cursor: not-allowed; }
+.tt-btn.primary { background: var(--tt-green); border-color: var(--tt-green); color: #fff; }
+.tt-btn.primary:hover:not(:disabled) { background: var(--tt-green-dark); border-color: var(--tt-green-dark); color: #fff; }
+.tt-btn.danger { color: var(--tt-danger); border-color: #f1c2bd; background: var(--tt-card); }
+.tt-btn.danger:hover:not(:disabled) { background: var(--tt-danger-soft); border-color: var(--tt-danger); color: var(--tt-danger); }
+
+/* --- glyphs: small icons in text, for emoji (docs/icon/make_glyphs.py) --------------
+ *  <img class="tt-glyph" src=".../trellis/glyphs/plant.svg" alt=""> Sow
+ * On a green (primary) button they show white. */
+.tt-glyph { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -.22em; flex: none; }
+:is(.btn-primary, .btn.primary, .tt-btn.primary) > .tt-glyph { filter: brightness(0) invert(1); }
+
+/* --- forms ------------------------------------------------------------------ */
+:where(body.tt :is(input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]):not([type=file]), select, textarea)) {
+    border: 1px solid var(--tt-border); border-radius: calc(var(--tt-radius) - .1rem); background: #fff; color: var(--tt-text); }
+:where(body.tt :is(input, select, textarea):focus) { outline: none; border-color: var(--tt-green); box-shadow: var(--tt-focus); }
+:where(body.tt :is(input[type=checkbox], input[type=radio])) { accent-color: var(--tt-green); }
+
+/* --- cards, tables, notes --------------------------------------------------------- */
+.tt-card { background: var(--tt-card); border: 1px solid var(--tt-border); border-radius: var(--tt-radius-lg); box-shadow: var(--tt-shadow); }
+.tt-note { background: var(--tt-green-soft); color: var(--tt-green-ink); border-radius: var(--tt-radius); padding: .6rem .8rem; }
+.tt-note.warn { background: var(--tt-warn-soft); color: var(--tt-warn); }
+.tt-note.danger { background: var(--tt-danger-soft); color: var(--tt-danger); }
