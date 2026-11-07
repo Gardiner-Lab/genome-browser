@@ -74,6 +74,7 @@ import labs_reader
 import readers
 import regions
 import serving
+import sharing
 
 # One gigabyte in bytes, for turning the MAX_BAM_GB ceiling into a byte limit.
 _BYTES_PER_GB = 1024 ** 3
@@ -334,10 +335,14 @@ def register_tracks(app: Flask) -> None:
                 _insert_share(conn, track_id, 'chair_group', chair_group_id,
                               member)
             _refresh_visibility(conn, track_id)
+            # Whoever the track now reaches must see its genome too.
+            granted = sharing.sync_genome_access(conn, track['genome_id'], member)
             conn.commit()
 
             track = _load_track(conn, track_id)
-            return jsonify(_track_metadata(track))
+            body = _track_metadata(track)
+            body['genome_shared_with'] = granted
+            return jsonify(body)
         finally:
             conn.close()
 
@@ -386,6 +391,8 @@ def register_tracks(app: Flask) -> None:
                     'WHERE track_id = ? AND target_type = ?',
                     (track_id, 'chair_group'))
             _refresh_visibility(conn, track_id)
+            # Genome access given only for this track's sake goes with it.
+            sharing.sync_genome_access(conn, track['genome_id'], member)
             conn.commit()
 
             track = _load_track(conn, track_id)
@@ -887,28 +894,11 @@ def _requested_labs(body: dict):
 
 def _lab_exists(lab_id: str) -> bool:
     """
-    Whether a lab with this id exists in ``suite.db`` (read-only).
-
-    ``labs_reader`` has no direct existence check — ``chair_group_of`` returns
-    ``None`` both for an unknown lab and for a real lab in no chair group — so
-    this reads ``suite.db`` read-only through ``db.open_suite`` to tell the two
-    apart for the invalid-lab rejection (Requirement 7.8). An absent or
-    unreadable store reads as "no such lab", matching ``labs_reader``'s
-    degrade-to-empty behaviour.
+    Whether a lab with this id exists in ``suite.db`` (read-only), through
+    ``labs_reader`` like every other lab lookup here. An absent or unreadable
+    store reads as "no such lab" (Requirement 7.8).
     """
-    if not lab_id:
-        return False
-    conn = db.open_suite()
-    if conn is None:
-        return False
-    try:
-        row = conn.execute('SELECT 1 FROM labs WHERE id = ?',
-                           (lab_id,)).fetchone()
-    except sqlite3.Error:
-        return False
-    finally:
-        conn.close()
-    return row is not None
+    return bool(lab_id) and labs_reader.lab_name(lab_id) is not None
 
 
 def _insert_share(conn, track_id, target_type, target_id, granted_by):

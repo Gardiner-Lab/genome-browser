@@ -65,7 +65,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <a href="#track">Adding tracks</a>
       <a href="#names">Chromosome names</a>
       <a href="#refused">When a track is refused</a>
-      <a href="#sees">Who sees what</a>
+      <a href="#sees">Who sees what, and sharing</a>
       <a href="#trouble">When something looks wrong</a>
     </nav>
 
@@ -93,7 +93,10 @@ def help_html(static_prefix: str, prefix: str) -> str:
         <li><b>Genome</b>: pick a reference. <i>Everyone</i> marks a suite genome, shared with all labs;
             <i>Your lab</i> marks one of your own lab's or chair group's.</li>
         <li><b>Tracks</b>: tick the data to lay over it. They are drawn in this order, top to bottom. The
-            sequence and the ruler are always there.</li>
+            sequence and the ruler are always there. With many tracks, <b>search</b> above the list: type
+            words from the name or the kind (<i>rnaseq rep2</i>, <i>bigwig</i>, <i>peaks</i>), then
+            <b>Tick shown</b> to tick everything found. A match on another of your genomes is listed below,
+            with <b>Go to that genome</b>.</li>
         <li><b>Start at</b>: a chromosome (click one) or a region such as <code>Chr1:3,600-9,000</code>.</li>
         <li><b>Open in browser</b>.</li>
       </ol>
@@ -111,8 +114,10 @@ def help_html(static_prefix: str, prefix: str) -> str:
             in the box in the browser's toolbar, or pick a chromosome from the list beside it.</td></tr>
         <tr><th>See a feature's details</th><td>Click it once: its name, type, position and the rest of its
             annotation appear in a box.</td></tr>
-        <tr><th>Change how tracks look</th><td><b>Track settings</b> in the toolbar: tick the tracks to
-            change (one, several, or <i>Select all</i>) and set their <b>height</b>, <b>colour</b>, how genes
+        <tr><th>Change how tracks look</th><td><b>Bulk track settings</b>, at the left of the bar above the
+            browser: tick the tracks to
+            change (one, several, or <i>Select all</i>) and set their <b>height</b>, <b>colour</b> (a swatch, the colour picker, or a hex code such as
+            <code>#1f5fa8</code>), how genes
             are drawn (<i>expanded</i>, every transcript on its own row; <i>squished</i>; <i>collapsed</i>) and,
             for coverage, the <b>scale</b>: each its own, <i>shared</i> so their heights compare, or a fixed
             range. All ticked tracks change together, and the settings are kept with your view. One track's
@@ -151,7 +156,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
              The browser goes there too.</p>
         </div>
       </div>
-      <p><b>Clear</b> in the bar, or <kbd>Esc</kbd>, removes the selection. A region drawn with the
+      <p><b>Clear</b> in the bar, <kbd>Esc</kbd>, or a click on the tracks outside the selected stretch removes the selection. A region drawn with the
          browser's own <b>ROI</b> tool in its toolbar becomes the selection as well.</p>
     </section>
 
@@ -176,11 +181,11 @@ def help_html(static_prefix: str, prefix: str) -> str:
 
     <section id="figure">
       <h2>Saving a figure</h2>
-      <p><b>Figure</b> in the browser's toolbar saves exactly what is on screen (the tracks, the
+      <p><b>Save to notebook</b>, at the left of the bar above the browser, saves exactly what is on screen (the tracks, the
          position, and any selection band) as a figure:</p>
       <ol class="steps">
         <li>Get the view right first: position, tracks, their heights and colours (each track's ⚙).</li>
-        <li>Click <b>Figure</b>. A preview shows what will be saved.</li>
+        <li>Click <b>Save to notebook</b>. A preview shows what will be saved.</li>
         <li>Give the page a <b>title</b> (it starts with the gene, the assembly and the position) and, if
             you like, a <b>note</b> saying what it shows.</li>
         <li><b>Save to Lab Notebook</b> makes a new page <b>under today</b> in your notebook, with the
@@ -264,7 +269,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
     </section>
 
     <section id="sees">
-      <h2>Who sees what</h2>
+      <h2>Who sees what, and sharing</h2>
       <ul>
         <li>A <b>genome</b> is seen by its lab's chair group, or just its lab if the lab is in none.
             A suite reference is seen by everyone.</li>
@@ -272,6 +277,14 @@ def help_html(static_prefix: str, prefix: str) -> str:
             everyone.</li>
         <li>Your <b>saved view</b> of each genome (where you were, which tracks) is yours alone.</li>
       </ul>
+      <p>To share, a member of the lab that owns it opens <b>Share</b>: <b>Share genome</b> beside the genome
+         list, or <b>Share</b> at the right of a track. It lists who sees it and why, and shares it with
+         another <b>lab</b> or a whole <b>chair group</b>; <b>Remove</b> takes a share back. Anyone else
+         sees the list but cannot change it.</p>
+      <p>A track is only any use to someone who can see its genome, so <b>sharing a track with a lab that
+         cannot see its genome shares the genome with that lab too</b>. That share is marked <i>through a
+         shared track</i> and goes again when no track on the genome is shared with the lab any more. If the
+         genome's own lab shares it on purpose as well, it stays.</p>
     </section>
 
     <section id="trouble">
@@ -305,7 +318,7 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
     <nav class="help-toc">
       <a href="#holds">What it holds</a>
       <a href="#check">Every track is checked</a>
-      <a href="#sees">Who sees what</a>
+      <a href="#sees">Who sees what, and sharing</a>
       <a href="#together">With the other tools</a>
       <a href="#kept">Where the data is kept</a>
       <a href="#credits">Credits and licence</a>
@@ -360,7 +373,7 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
       <ul>
         <li><b>Sequence Editor</b>: a selection opens there as a new sequence, annotated from the gene
             tracks on screen.</li>
-        <li><b>Lab Notebook</b>: <b>Figure</b> saves the view as a page under today, with the picture,
+        <li><b>Lab Notebook</b>: <b>Save to notebook</b> saves the view as a page under today, with the picture,
             what it shows, and the SVG to download.</li>
         <li><b>Seed Bank</b> and plasmids: tracks and genomes can be tagged with the plasmid or seed line
             they come from.</li>

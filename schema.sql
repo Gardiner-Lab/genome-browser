@@ -30,7 +30,19 @@ CREATE TABLE IF NOT EXISTS genome_shares (
   chair_group_id  TEXT NOT NULL,           -- suite.db chair_groups id
   granted_by      TEXT NOT NULL,
   granted_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  auto            INTEGER NOT NULL DEFAULT 0,  -- 1: granted because a track on it was shared
   PRIMARY KEY (genome_id, chair_group_id)
+);
+
+-- A genome shared with a single lab, by its owner lab or, so a shared track can
+-- be seen, because one of its tracks was shared with that lab (auto = 1).
+CREATE TABLE IF NOT EXISTS genome_lab_shares (
+  genome_id       TEXT NOT NULL REFERENCES reference_genomes(id) ON DELETE CASCADE,
+  lab_id          TEXT NOT NULL,           -- suite.db lab id
+  granted_by      TEXT NOT NULL,
+  granted_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  auto            INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (genome_id, lab_id)
 );
 
 -- Tracks -----------------------------------------------------------------

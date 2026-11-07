@@ -52,6 +52,7 @@ import gzip
 import os
 import sqlite3
 import uuid
+from typing import List
 
 from flask import Flask, current_app, jsonify, request
 
@@ -61,6 +62,7 @@ import identity
 import labs_reader
 import readers
 import serving
+import sharing
 
 # The FASTA upload ceiling (Requirement 2.4): a custom Reference_Genome may be
 # no larger than 4 GB. Enforced here in the app so the limit holds regardless
@@ -373,13 +375,15 @@ def register_genomes(app: Flask) -> None:
 
 def _mutate_genome_share(genome_id, grant: bool):
     """
-    Shared body of the share/unshare endpoints (grant or revoke a chair-group).
+    Shared body of the share/unshare endpoints: chair groups and single labs.
 
     Both verbs resolve identity, load the genome under the same 404 guard,
-    enforce the owner-lab guard, and validate the chair-group target the same
-    way; they differ only in whether they insert or delete the
-    ``genome_shares`` row. Keeping the two in one place means the guards cannot
-    drift apart.
+    enforce the owner-lab guard, and validate every target before changing
+    anything. A share made here is a purposeful one (``auto = 0``), and takes
+    over an automatic share of the same target; revoking removes only
+    purposeful shares, so a lab that still has a track shared with it on this
+    genome keeps seeing the genome (``sharing.sync_genome_access``), and the
+    answer says which.
     """
     member = identity.require_member()
     conn = db.connect(current_app.config['DATA_ROOT'] / 'genome.db')
@@ -387,6 +391,8 @@ def _mutate_genome_share(genome_id, grant: bool):
         genome = _load_genome(conn, genome_id)
         if genome is None or not access.can_view_genome(member, genome, conn):
             return jsonify({'error': 'Reference genome not found'}), 404
+        if genome['genome_visibility'] == access.SUITE_VISIBILITY:
+            return jsonify({'error': 'A suite reference genome is seen by everyone already.'}), 400
 
         # Owner-lab guard first: a non-owner changes nothing (Requirement 12.6).
         try:
@@ -394,70 +400,94 @@ def _mutate_genome_share(genome_id, grant: bool):
         except access.PermissionDenied as exc:
             return jsonify({'error': str(exc)}), 403
 
-        chair_group_id, error = _share_target(request.get_json(silent=True))
+        groups, labs, error = _share_targets(request.get_json(silent=True))
         if error is not None:
             return jsonify({'error': error}), 400
 
         if grant:
-            # Idempotent via the (genome_id, chair_group_id) primary key, so
-            # re-sharing the same chair group preserves the existing row and
-            # changes nothing else (Requirements 12.3, 12.5).
-            conn.execute(
-                'INSERT OR IGNORE INTO genome_shares '
-                '(genome_id, chair_group_id, granted_by) VALUES (?, ?, ?)',
-                (genome_id, chair_group_id, member))
+            for group in groups:
+                conn.execute(
+                    'INSERT INTO genome_shares (genome_id, chair_group_id, granted_by, auto) '
+                    'VALUES (?, ?, ?, 0) ON CONFLICT (genome_id, chair_group_id) DO UPDATE SET auto = 0',
+                    (genome_id, group, member))
+            for lab in labs:
+                conn.execute(
+                    'INSERT INTO genome_lab_shares (genome_id, lab_id, granted_by, auto) '
+                    'VALUES (?, ?, ?, 0) ON CONFLICT (genome_id, lab_id) DO UPDATE SET auto = 0',
+                    (genome_id, lab, member))
         else:
             # Revoking a share that was never granted is harmless (Req 12.7).
-            conn.execute(
-                'DELETE FROM genome_shares '
-                'WHERE genome_id = ? AND chair_group_id = ?',
-                (genome_id, chair_group_id))
+            for group in groups:
+                conn.execute('DELETE FROM genome_shares WHERE genome_id = ? AND chair_group_id = ? '
+                             'AND auto = 0', (genome_id, group))
+            for lab in labs:
+                conn.execute('DELETE FROM genome_lab_shares WHERE genome_id = ? AND lab_id = ? '
+                             'AND auto = 0', (genome_id, lab))
+        sharing.sync_genome_access(conn, genome_id, member)
         conn.commit()
+        body = sharing.genome_share_body(conn, member, genome)
     finally:
         conn.close()
 
-    return jsonify({
-        'id': genome_id,
-        'chair_group_id': chair_group_id,
-        'shared': grant,
-    })
+    # Kept for older callers: the one chair group a request named.
+    body['chair_group_id'] = groups[0] if len(groups) == 1 and not labs else None
+    body['shared'] = grant
+    if not grant:
+        # Revoked on purpose but still needed for a shared track: it stays, automatic.
+        body['kept'] = [x for x in body['shares']
+                        if x.get('auto') and ((x['type'] == 'lab' and x['id'] in labs)
+                                              or (x['type'] == 'chair_group' and x['id'] in groups))]
+    return jsonify(body)
 
 
-def _share_target(body):
+def _share_targets(body):
     """
-    The chair-group id a share request names, or an error describing why not.
+    The chair groups and labs a share request names, or why it cannot be done.
 
-    A Reference_Genome's sharing targets are chair groups only, never individual
-    labs (Requirement 12.4). The request body may name the target either as a
-    bare ``chair_group_id`` or as a ``{target_type, target_id}`` pair; when a
-    ``target_type`` is given it must be ``'chair_group'`` so an attempt to share
-    with an individual lab is rejected explicitly. The named chair group must
-    exist in ``suite.db`` or the request is rejected as invalid (Requirement
-    12.8). Returns ``(chair_group_id, None)`` on success, else
-    ``(None, error_message)``.
+    The body may name ``chair_group_id`` (one chair group), ``chair_groups`` (a
+    list), ``labs`` (a list of lab ids), or a ``{target_type, target_id}`` pair
+    whose type is ``'chair_group'`` or ``'lab'``. Every target must exist in
+    ``suite.db``; one that does not rejects the whole request, so nothing
+    changes (Requirement 12.8). Returns ``(groups, labs, None)`` or
+    ``(None, None, error)``.
     """
     body = body or {}
+    groups: List[str] = []
+    labs: List[str] = []
+
+    def text(v):
+        return v.strip() if isinstance(v, str) else ''
 
     target_type = body.get('target_type')
-    if target_type is not None and target_type != 'chair_group':
-        # An explicit non-chair-group target — an individual lab — is never a
-        # valid sharing target for a Reference_Genome (Requirement 12.4).
-        return None, ('A reference genome can only be shared with a chair '
-                      'group, not with an individual lab.')
-
-    chair_group_id = (
-        body.get('chair_group_id')
-        or (body.get('target_id') if target_type == 'chair_group' else None))
-    chair_group_id = (chair_group_id or '').strip() if isinstance(
-        chair_group_id, str) else chair_group_id
-    if not chair_group_id:
-        return None, 'A chair group to share with is required.'
-
-    if not labs_reader.chair_group_exists(chair_group_id):
-        return None, (f'The chair group "{chair_group_id}" is invalid; '
-                      f'no such chair group exists.')
-
-    return chair_group_id, None
+    if target_type is not None:
+        if target_type == 'chair_group':
+            groups.append(text(body.get('target_id')))
+        elif target_type == 'lab':
+            labs.append(text(body.get('target_id')))
+        else:
+            return None, None, 'target_type must be "chair_group" or "lab".'
+    if body.get('chair_group_id'):
+        groups.append(text(body.get('chair_group_id')))
+    for key, into in (('chair_groups', groups), ('labs', labs)):
+        raw = body.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            return None, None, f'{key} must be a list.'
+        into.extend(text(v) for v in raw)
+    groups = list(dict.fromkeys(g for g in groups if g))
+    labs = list(dict.fromkeys(lab for lab in labs if lab))
+    if not groups and not labs:
+        return None, None, 'Name a chair group or a lab to share with.'
+    for group in groups:
+        if not labs_reader.chair_group_exists(group):
+            return None, None, (f'The chair group "{group}" is invalid; '
+                                f'no such chair group exists.')
+    known = {lab['id'] for lab in labs_reader.all_labs()}
+    for lab in labs:
+        if lab not in known:
+            return None, None, f'The lab "{lab}" is invalid; no such lab exists.'
+    return groups, labs, None
 
 
 def _load_genome(conn: sqlite3.Connection, genome_id: str):

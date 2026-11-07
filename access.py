@@ -135,7 +135,22 @@ def genome_viewer_labs(genome, conn=None) -> Set[str]:
     genome_id = _get(genome, 'id')
     if genome_id:
         labs.update(_labs_of_chair_groups(_shared_chair_groups(genome_id, conn)))
+        labs.update(_shared_labs(genome_id, conn))
     return labs
+
+
+def _shared_labs(genome_id: str, conn=None) -> List[str]:
+    """The labs a genome has been shared with one by one (``genome_lab_shares``)."""
+    owns = conn is None
+    conn = conn or db.connect()
+    try:
+        rows = conn.execute(
+            'SELECT lab_id FROM genome_lab_shares WHERE genome_id = ?',
+            (genome_id,)).fetchall()
+    finally:
+        if owns:
+            conn.close()
+    return [r['lab_id'] for r in rows]
 
 
 def _shared_chair_groups(genome_id: str, conn=None) -> List[str]:

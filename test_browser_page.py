@@ -123,3 +123,9 @@ def test_the_guides_are_on_the_page(client):
     for marker in ('id="intro-guide"', 'id="controls"', 'id="controls-toggle"',
                    'Shift</kbd> + drag', 'Double-click a feature'):
         assert marker in page, marker
+
+
+def test_the_track_search_is_on_the_page(client):
+    page = client.get('/').get_data(as_text=True)
+    for marker in ('id="track-search"', 'id="tracks-shown"', 'id="track-elsewhere"', 'id="tp-search"'):
+        assert marker in page, marker

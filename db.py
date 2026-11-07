@@ -107,6 +107,7 @@ def init_db(path=None) -> None:
 # volume made by an earlier release gets them here.
 _ADDED_COLUMNS = (
     ('tracks', 'chrom_check', 'TEXT'),
+    ('genome_shares', 'auto', 'INTEGER NOT NULL DEFAULT 0'),
 )
 
 

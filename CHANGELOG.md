@@ -9,6 +9,46 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-07
+
+### Added
+- **Track search.** A search box above the track list filters it as you type. Every word must
+  appear in a track's name or kind (*rnaseq rep2*, *bigwig*, *peaks*), and the matches are
+  highlighted, with a count (*3 of 19 tracks*). **Tick shown** ticks everything found. Matches on
+  the member's other genomes are listed below, each with **Go to that genome**, which switches there
+  with that track ticked. Track settings has its own search over the open tracks, and its *Select
+  all* ticks only what that search shows.
+
+- **A track's colour as a hex code** (`#1f5fa8`, `1f5fa8` or the short `#15a`) in Bulk track
+  settings, beside the swatches and the colour picker, which follow it.
+- **A click on the tracks outside the selection clears it**, as clicking away does anywhere else.
+  A click inside the selection, or one that ends a drag along the genome, leaves it.
+
+- **Sharing between labs, from the page.**
+  - **Share genome** beside the genome list, and **Share** on every track, open a dialog listing
+    who sees it and why: owner lab, its chair group by default, everyone, shared, or *through a
+    shared track*.
+  - A member of the owning lab can share with another lab or a whole chair group, and remove a
+    share. Anyone else sees the list but cannot change it.
+  - `GET /api/labs`, `GET /api/genomes/<id>/shares` and `GET /api/tracks/<id>/shares` feed the
+    dialog. A lab's registration code is never read.
+- **A genome can be shared with a single lab** (`labs` in `POST|DELETE /api/genomes/<id>/share`,
+  new table `genome_lab_shares`), not only with chair groups.
+- **A shared track takes its genome with it.** Sharing a track with a lab or chair group that
+  cannot see its genome shares the genome with them too (`auto = 1`, *through a shared track*), and
+  the track share's answer says so (`genome_shared_with`).
+  - Once no shared track on the genome needs it, that share goes again.
+  - If the genome's lab also shares it on purpose, it stays, and un-sharing the genome on purpose
+    leaves the automatic share for as long as a track needs it (`kept`).
+  - Suite genomes need none of this.
+
+### Changed
+- A long track list scrolls inside itself, so *Start at* and *Open in browser* stay within reach
+  below it.
+- *Track settings* is now **Bulk track settings**, and *Figure* is now **Save to notebook**. Both
+  moved from the far right of the toolbar to the left of the selection bar, before *Select region*,
+  where they are seen. The settings panel opens under that bar.
+
 ## [0.3.0] - 2026-11-07
 
 A browser that works end to end: choose what to show, select sequence and send it on, add

@@ -515,6 +515,8 @@ def _browser_html(static_prefix: str) -> str:
           <h2 id="step-genome-title">Genome</h2>
           <a class="gb-help-link" href="{prefix}/help#genome" title="About genomes and adding one">?</a>
           <span class="gb-actions">
+            <button type="button" class="tt-btn" id="share-genome" hidden
+                    title="See and change which labs see this genome">Share genome</button>
             <button type="button" class="tt-btn" id="add-genome">+ Add a genome</button>
           </span>
         </div>
@@ -535,7 +537,18 @@ def _browser_html(static_prefix: str) -> str:
             <button type="button" class="tt-btn" id="add-track">+ Add tracks</button>
           </span>
         </div>
+        <div class="gb-search" id="track-search-row">
+          <input id="track-search" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search tracks by name or kind: rnaseq rep2, bigwig, peaks…"
+                 aria-label="Search tracks" aria-controls="track-list">
+          <span class="gb-hint" id="track-search-count" aria-live="polite"></span>
+          <button type="button" class="gb-link" id="tracks-shown" hidden>Tick shown</button>
+        </div>
         <ul id="track-list" class="gb-tracks"></ul>
+        <div class="gb-elsewhere" id="track-elsewhere" hidden>
+          <h3>On your other genomes</h3>
+          <ul id="track-elsewhere-list"></ul>
+        </div>
         <ul id="pending-list" class="gb-pending" aria-live="polite"></ul>
       </section>
 
@@ -567,22 +580,103 @@ def _browser_html(static_prefix: str) -> str:
       <span class="gb-hint" id="view-hint"></span>
       <span class="gb-spacer"></span>
       <span class="gb-saved" id="saved" aria-live="polite"></span>
-      <button type="button" class="tt-btn" id="tracks-toggle" aria-expanded="false" aria-controls="tracks-panel"
-              title="Change the height, colour, display or scale of several tracks at once">Track settings</button>
-      <button type="button" class="tt-btn" id="figure-open"
-              title="Save this view as a figure: to your Lab Notebook as a page under today, or as an SVG file">Figure</button>
       <button type="button" class="tt-btn" id="controls-toggle" aria-expanded="false" aria-controls="controls">
         <span aria-hidden="true">?</span> Controls</button>
       <button type="button" class="tt-btn" id="change" title="Back to choosing the genome, tracks and where to start">Change genome or tracks</button>
     </div>
+    <aside class="gb-controls" id="controls" hidden aria-labelledby="controls-title">
+      <div class="gb-controls-head">
+        <h2 id="controls-title">Controls</h2>
+        <a href="{prefix}/help#move">Full help</a>
+        <button type="button" class="gb-link" id="controls-close">Got it, hide this</button>
+      </div>
+      <div class="gb-controls-grid">
+        <section>
+          <h3>Moving around</h3>
+          <dl>
+            <dt>Drag the tracks</dt><dd>move along the genome</dd>
+            <dt><b>+</b> / <b>&minus;</b>, slider</dt><dd>zoom in and out</dd>
+            <dt>Box in the toolbar</dt><dd>go to <code>Chr1:3,600-9,000</code> or a chromosome</dd>
+            <dt>Click a feature</dt><dd>its details</dd>
+            <dt>Bulk track settings</dt><dd>height, colour, display or scale of several tracks at once</dd>
+            <dt>⚙ on a track</dt><dd>the same, for one track</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Selecting sequence</h3>
+          <dl>
+            <dt>Double-click a feature</dt><dd>select exactly that gene or transcript</dd>
+            <dt><kbd>Shift</kbd> + drag</dt><dd>select any stretch</dd>
+            <dt>Select region</dt><dd>while on, a plain drag selects</dd>
+            <dt>Type a region</dt><dd>in the bar, then <b>Select</b></dd>
+            <dt><kbd>Esc</kbd>, or click outside it</dt><dd>clear the selection (Esc first leaves Select region)</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Taking it away</h3>
+          <dl>
+            <dt>Open in Sequence Editor</dt><dd>up to 30 kb, with its annotations</dd>
+            <dt>BLAST at NCBI</dt><dd>up to 2 Mb; sends it to NCBI</dd>
+            <dt>Copy sequence</dt><dd>up to 2 Mb</dd>
+            <dt>Download FASTA</dt><dd>any length</dd>
+          </dl>
+          <p class="gb-hint">Minus-strand features are sent reverse-complemented, as they read.</p>
+          <h3>Figures</h3>
+          <dl>
+            <dt>Save to notebook</dt><dd>the view as a figure on a page under today, or as SVG</dd>
+          </dl>
+        </section>
+      </div>
+    </aside>
+    <div id="vendor-note" class="vendor-note" hidden>
+      The IGV viewer (<code>igv.min.js</code>) did not load, so the interactive
+      browser cannot start. It is served from <code>{static}/</code> and
+      never fetched from the internet, so this means the file is missing from the
+      image. The API endpoints under <code>{prefix}/api/</code> work regardless.
+    </div>
+    <div class="gb-selection" id="selection">
+      <div class="gb-select-tools">
+        <button type="button" class="tt-btn gb-bulk" id="tracks-toggle" aria-expanded="false" aria-controls="tracks-panel"
+                title="Change the height, colour, display or scale of several tracks at once">
+          <span class="gb-bulk-icon" aria-hidden="true"></span>Bulk track settings</button>
+        <button type="button" class="tt-btn" id="figure-open"
+                title="Save this view as a figure: to your Lab Notebook as a page under today, or as an SVG file">Save to notebook</button>
+        <span class="gb-tool-sep" aria-hidden="true"></span>
+        <button type="button" class="tt-btn gb-mode" id="select-mode" aria-pressed="false"
+                title="While on, dragging across the tracks selects sequence instead of moving along">
+          <span class="gb-mode-icon" aria-hidden="true"></span>Select region</button>
+        <form id="select-form" class="gb-select-form" novalidate>
+          <input id="select-locus" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="or type Chr1:3,631-5,899" aria-label="Select a region by its coordinates">
+          <button type="submit" class="tt-btn">Select</button>
+        </form>
+      </div>
+      <div class="gb-selection-text" id="selection-text" aria-live="polite"></div>
+      <div class="gb-selection-actions" id="selection-actions" hidden>
+        <button type="button" class="tt-btn primary" id="send-editor"
+                title="Open it as a new sequence in the Sequence Editor, with its annotations (up to 30 kb)">Open in Sequence Editor</button>
+        <button type="button" class="tt-btn" id="send-blast"
+                title="Open NCBI nucleotide BLAST with it filled in (up to 2 Mb). This sends the sequence to NCBI.">BLAST at NCBI</button>
+        <button type="button" class="tt-btn" id="copy-seq"
+                title="Copy the bases to the clipboard (up to 2 Mb)">Copy sequence</button>
+        <button type="button" class="tt-btn" id="save-fasta"
+                title="Download it as a FASTA file, at any length">Download FASTA</button>
+        <button type="button" class="gb-link" id="clear-selection" title="Clear the selection (Esc)">Clear</button>
+      </div>
+      <p class="gb-note" id="selection-note" hidden></p>
+      <p class="gb-error" id="selection-error" role="alert" hidden></p>
+    </div>
+    <div id="drag-band" class="gb-drag-band" hidden></div>
     <aside class="gb-tracks-panel" id="tracks-panel" hidden aria-labelledby="tracks-panel-title">
       <div class="gb-controls-head">
-        <h2 id="tracks-panel-title">Track settings</h2>
+        <h2 id="tracks-panel-title">Bulk track settings</h2>
         <span class="gb-hint">Tick the tracks to change, then set them all at once. Kept with your view.</span>
         <button type="button" class="gb-link" id="tracks-panel-close">Done</button>
       </div>
       <div class="gb-tp-body">
         <div class="gb-tp-list">
+          <input id="tp-search" class="gb-tp-search" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Find a track…" aria-label="Find a track in this view" aria-controls="tp-tracks">
           <div class="gb-tp-list-head">
             <button type="button" class="gb-link" id="tp-all">Select all</button>
             <button type="button" class="gb-link" id="tp-none">Select none</button>
@@ -606,9 +700,14 @@ def _browser_html(static_prefix: str) -> str:
           <div class="gb-tp-row">
             <span class="gb-tp-label">Colour</span>
             <span class="gb-tp-swatches" id="tp-swatches"></span>
-            <label class="gb-tp-inline" title="Any colour">
-              <input id="tp-color" type="color" value="#2b8040" aria-label="Choose any colour">
+            <label class="gb-tp-inline" title="Pick any colour">
+              <input id="tp-color" type="color" value="#2b8040" aria-label="Pick any colour">
             </label>
+            <form id="tp-hex-form" class="gb-tp-inline" title="A colour as a hex code, such as #1f5fa8">
+              <input id="tp-hex" type="text" maxlength="7" spellcheck="false" autocomplete="off"
+                     placeholder="#1f5fa8" aria-label="Colour as a hex code" class="gb-tp-hex">
+              <button type="submit" class="tt-btn">Set</button>
+            </form>
             <button type="button" class="gb-link" id="tp-color-reset">Original colours</button>
           </div>
           <div class="gb-tp-row" id="tp-display-row">
@@ -639,83 +738,6 @@ def _browser_html(static_prefix: str) -> str:
         </div>
       </div>
     </aside>
-    <aside class="gb-controls" id="controls" hidden aria-labelledby="controls-title">
-      <div class="gb-controls-head">
-        <h2 id="controls-title">Controls</h2>
-        <a href="{prefix}/help#move">Full help</a>
-        <button type="button" class="gb-link" id="controls-close">Got it, hide this</button>
-      </div>
-      <div class="gb-controls-grid">
-        <section>
-          <h3>Moving around</h3>
-          <dl>
-            <dt>Drag the tracks</dt><dd>move along the genome</dd>
-            <dt><b>+</b> / <b>&minus;</b>, slider</dt><dd>zoom in and out</dd>
-            <dt>Box in the toolbar</dt><dd>go to <code>Chr1:3,600-9,000</code> or a chromosome</dd>
-            <dt>Click a feature</dt><dd>its details</dd>
-            <dt>Track settings</dt><dd>height, colour, display or scale of several tracks at once</dd>
-            <dt>⚙ on a track</dt><dd>the same, for one track</dd>
-          </dl>
-        </section>
-        <section>
-          <h3>Selecting sequence</h3>
-          <dl>
-            <dt>Double-click a feature</dt><dd>select exactly that gene or transcript</dd>
-            <dt><kbd>Shift</kbd> + drag</dt><dd>select any stretch</dd>
-            <dt>Select region</dt><dd>while on, a plain drag selects</dd>
-            <dt>Type a region</dt><dd>in the bar, then <b>Select</b></dd>
-            <dt><kbd>Esc</kbd></dt><dd>leave Select region, then clear</dd>
-          </dl>
-        </section>
-        <section>
-          <h3>Taking it away</h3>
-          <dl>
-            <dt>Open in Sequence Editor</dt><dd>up to 30 kb, with its annotations</dd>
-            <dt>BLAST at NCBI</dt><dd>up to 2 Mb; sends it to NCBI</dd>
-            <dt>Copy sequence</dt><dd>up to 2 Mb</dd>
-            <dt>Download FASTA</dt><dd>any length</dd>
-          </dl>
-          <p class="gb-hint">Minus-strand features are sent reverse-complemented, as they read.</p>
-          <h3>Figures</h3>
-          <dl>
-            <dt>Figure</dt><dd>save the view to your Lab Notebook, under today, or download it as SVG</dd>
-          </dl>
-        </section>
-      </div>
-    </aside>
-    <div id="vendor-note" class="vendor-note" hidden>
-      The IGV viewer (<code>igv.min.js</code>) did not load, so the interactive
-      browser cannot start. It is served from <code>{static}/</code> and
-      never fetched from the internet, so this means the file is missing from the
-      image. The API endpoints under <code>{prefix}/api/</code> work regardless.
-    </div>
-    <div class="gb-selection" id="selection">
-      <div class="gb-select-tools">
-        <button type="button" class="tt-btn gb-mode" id="select-mode" aria-pressed="false"
-                title="While on, dragging across the tracks selects sequence instead of moving along">
-          <span class="gb-mode-icon" aria-hidden="true"></span>Select region</button>
-        <form id="select-form" class="gb-select-form" novalidate>
-          <input id="select-locus" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="or type Chr1:3,631-5,899" aria-label="Select a region by its coordinates">
-          <button type="submit" class="tt-btn">Select</button>
-        </form>
-      </div>
-      <div class="gb-selection-text" id="selection-text" aria-live="polite"></div>
-      <div class="gb-selection-actions" id="selection-actions" hidden>
-        <button type="button" class="tt-btn primary" id="send-editor"
-                title="Open it as a new sequence in the Sequence Editor, with its annotations (up to 30 kb)">Open in Sequence Editor</button>
-        <button type="button" class="tt-btn" id="send-blast"
-                title="Open NCBI nucleotide BLAST with it filled in (up to 2 Mb). This sends the sequence to NCBI.">BLAST at NCBI</button>
-        <button type="button" class="tt-btn" id="copy-seq"
-                title="Copy the bases to the clipboard (up to 2 Mb)">Copy sequence</button>
-        <button type="button" class="tt-btn" id="save-fasta"
-                title="Download it as a FASTA file, at any length">Download FASTA</button>
-        <button type="button" class="gb-link" id="clear-selection" title="Clear the selection (Esc)">Clear</button>
-      </div>
-      <p class="gb-note" id="selection-note" hidden></p>
-      <p class="gb-error" id="selection-error" role="alert" hidden></p>
-    </div>
-    <div id="drag-band" class="gb-drag-band" hidden></div>
     <div id="igv-container" role="application" aria-label="Interactive genome browser"></div>
   </section>
 
@@ -744,6 +766,28 @@ def _browser_html(static_prefix: str) -> str:
       <div class="gb-dialog-actions">
         <button type="button" class="tt-btn" value="cancel" data-close>Cancel</button>
         <button type="submit" class="tt-btn primary">Upload genome</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="share-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="share-title">
+    <form method="dialog" id="share-form" novalidate>
+      <h2 id="share-title">Share</h2>
+      <p class="gb-hint" id="share-intro"></p>
+      <h3 class="gb-share-h">Who sees it</h3>
+      <ul class="gb-share-list" id="share-list"></ul>
+      <div id="share-add">
+        <h3 class="gb-share-h">Share with</h3>
+        <div class="gb-share-add-row">
+          <select id="share-target" aria-label="A lab or chair group to share with"></select>
+          <button type="button" class="tt-btn primary" id="share-go">Share</button>
+        </div>
+        <p class="gb-hint" id="share-note"></p>
+      </div>
+      <div class="gb-notice" id="share-done" hidden></div>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" id="share-close">Close</button>
       </div>
     </form>
   </dialog>

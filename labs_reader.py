@@ -101,3 +101,29 @@ def chair_group_exists(group_id: str) -> bool:
     if not group_id:
         return False
     return bool(_query('SELECT 1 FROM chair_groups WHERE id = ?', (group_id,)))
+
+
+def all_labs() -> List[dict]:
+    """
+    Every lab in the suite, for choosing whom to share with:
+    ``[{'id', 'name', 'chair_group_id'}]``, by name. Only these columns are
+    read: a lab's registration code is never touched.
+    """
+    rows = _query('SELECT id, name, chair_group_id FROM labs ORDER BY name COLLATE NOCASE')
+    return [{'id': r['id'], 'name': r['name'], 'chair_group_id': r['chair_group_id']} for r in rows]
+
+
+def all_chair_groups() -> List[dict]:
+    """Every chair group, ``[{'id', 'name'}]``, by name."""
+    rows = _query('SELECT id, name FROM chair_groups ORDER BY name COLLATE NOCASE')
+    return [{'id': r['id'], 'name': r['name']} for r in rows]
+
+
+def lab_name(lab_id: str) -> Optional[str]:
+    rows = _query('SELECT name FROM labs WHERE id = ?', (lab_id,)) if lab_id else []
+    return rows[0]['name'] if rows else None
+
+
+def chair_group_name(group_id: str) -> Optional[str]:
+    rows = _query('SELECT name FROM chair_groups WHERE id = ?', (group_id,)) if group_id else []
+    return rows[0]['name'] if rows else None

@@ -72,6 +72,10 @@ def seeded(tmp_path, monkeypatch):
                         lambda g: group_labs.get(g, []))
     monkeypatch.setattr(labs_reader, 'chair_group_exists',
                         lambda g: g in group_labs)
+    monkeypatch.setattr(labs_reader, 'all_labs', lambda: [
+        {'id': lab, 'name': lab, 'chair_group_id': g} for lab, g in lab_group.items()])
+    monkeypatch.setattr(labs_reader, 'lab_name', lambda lab: lab)
+    monkeypatch.setattr(labs_reader, 'chair_group_name', lambda g: g)
 
     client = application.test_client()
 
@@ -174,16 +178,39 @@ def test_non_owner_forbidden(seeded):
 
 
 # ---------------------------------------------------------------------------
-# Individual-lab target rejected (Req 12.4)
+# A genome can be shared with a single lab too
 # ---------------------------------------------------------------------------
 
 
-def test_individual_lab_target_rejected(seeded):
-    resp = seeded['share'](
-        seeded['genome_a'], {'target_type': 'lab', 'target_id': 'labX'})
+def _lab_shares(data_root, genome_id):
+    conn = db.connect(data_root / 'genome.db')
+    try:
+        return conn.execute('SELECT * FROM genome_lab_shares WHERE genome_id = ?',
+                            (genome_id,)).fetchall()
+    finally:
+        conn.close()
+
+
+def test_genome_shared_with_a_single_lab(seeded):
+    assert not _can_view(seeded['data_root'], 'carol', seeded['genome_a'])
+    resp = seeded['share'](seeded['genome_a'], {'target_type': 'lab', 'target_id': 'labX'})
+    assert resp.status_code == 200, resp.get_json()
+    rows = _lab_shares(seeded['data_root'], seeded['genome_a'])
+    assert [(r['lab_id'], r['auto']) for r in rows] == [('labX', 0)]
+    assert _can_view(seeded['data_root'], 'carol', seeded['genome_a'])
+    # Only that lab: bob's labZ still cannot.
+    assert not _can_view(seeded['data_root'], 'bob', seeded['genome_a'])
+
+    resp = seeded['share'](seeded['genome_a'], {'labs': ['labX']}, method='DELETE')
+    assert resp.status_code == 200
+    assert not _can_view(seeded['data_root'], 'carol', seeded['genome_a'])
+
+
+def test_unknown_lab_rejected_and_nothing_changes(seeded):
+    resp = seeded['share'](seeded['genome_a'], {'labs': ['labX', 'nope']})
     assert resp.status_code == 400
-    assert 'chair group' in resp.get_json()['error'].lower()
-    assert _shares(seeded['data_root']) == []
+    assert 'nope' in resp.get_json()['error']
+    assert _lab_shares(seeded['data_root'], seeded['genome_a']) == []
 
 
 # ---------------------------------------------------------------------------

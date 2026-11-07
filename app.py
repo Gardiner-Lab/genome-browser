@@ -31,10 +31,11 @@ from genomes import register_genomes
 from tracks import register_tracks
 from regions import register_regions
 from serving import register_serving
+from sharing import register_sharing
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.3.0'
+APP_VERSION = '0.4.0'
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +118,7 @@ def create_app(config: Config = None) -> Flask:
     register_tags(app)
     register_views(app)
     register_serving(app)
+    register_sharing(app)
     return app
 
 

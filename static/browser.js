@@ -187,11 +187,12 @@
         var genome = state.genomes.find(function (g) { return g.id === id; });
         if (!genome) { return; }
         var changed = !state.genome || state.genome.id !== id;
+        if (changed) { state.otherTracks = null; }
         state.genome = genome;
         Array.prototype.forEach.call(document.querySelectorAll('.gb-genome'), function (b) {
             b.setAttribute('aria-pressed', b.getAttribute('data-id') === id ? 'true' : 'false');
         });
-        ['step-tracks', 'step-locus', 'open-row'].forEach(function (s) { el(s).hidden = false; });
+        ['step-tracks', 'step-locus', 'open-row', 'share-genome'].forEach(function (s) { el(s).hidden = false; });
         el('track-list').replaceChildren(make('li', {}, [make('p', { class: 'gb-loading', text: 'Loading tracks…' })]));
         el('locus-error').hidden = true;
 
@@ -211,10 +212,13 @@
                 if (!state.view || !state.view.updated_at) {
                     keep = state.tracks.length <= 6 ? state.tracks.map(function (t) { return t.id; }) : [];
                 }
-                // A track just added here starts ticked.
+                // A track just added here starts ticked, as does one found by
+                // searching from another genome.
                 state.pending.forEach(function (p) {
                     if (p.genomeId === id && p.status === 'done' && available.has(p.id)) { keep.push(p.id); }
                 });
+                if (state.tickAfterLoad && available.has(state.tickAfterLoad)) { keep.push(state.tickAfterLoad); }
+                state.tickAfterLoad = null;
                 state.selected = new Set(keep);
                 el('locus').value = defaultLocus();
             }
@@ -227,36 +231,155 @@
         });
     }
 
+    // ------------------------------------------------------------------
+    // Finding a track: every word typed must appear in its name or kind
+    // ------------------------------------------------------------------
+
+    function searchWords(text) {
+        return String(text || '').toLowerCase().split(/[\s,;]+/).filter(Boolean);
+    }
+
+    function trackText(t) {
+        return (t.name + ' ' + trackKind(t.type) + ' ' + t.type + (t.visibility === 'suite' ? ' shared everyone' : '')).toLowerCase();
+    }
+
+    function trackMatches(t, words) {
+        if (!words.length) { return true; }
+        var text = trackText(t);
+        return words.every(function (w) { return text.indexOf(w) >= 0; });
+    }
+
+    // The name with each searched word marked, as nodes (never as HTML).
+    function highlighted(name, words) {
+        if (!words.length) { return [document.createTextNode(name)]; }
+        var lower = name.toLowerCase();
+        var marks = [];
+        words.forEach(function (w) {
+            var from = 0, at;
+            while ((at = lower.indexOf(w, from)) >= 0) { marks.push([at, at + w.length]); from = at + w.length; }
+        });
+        if (!marks.length) { return [document.createTextNode(name)]; }
+        marks.sort(function (a, b) { return a[0] - b[0]; });
+        var merged = [];
+        marks.forEach(function (m) {
+            var last = merged[merged.length - 1];
+            if (last && m[0] <= last[1]) { last[1] = Math.max(last[1], m[1]); } else { merged.push(m.slice()); }
+        });
+        var nodes = [], pos = 0;
+        merged.forEach(function (m) {
+            if (m[0] > pos) { nodes.push(document.createTextNode(name.slice(pos, m[0]))); }
+            nodes.push(make('mark', { text: name.slice(m[0], m[1]) }));
+            pos = m[1];
+        });
+        if (pos < name.length) { nodes.push(document.createTextNode(name.slice(pos))); }
+        return nodes;
+    }
+
     function renderTracks() {
         var list = el('track-list');
-        var rows = [make('li', { class: 'gb-sequence-row' }, [
-            make('span', { class: 'gb-dot', text: '✓', 'aria-hidden': 'true' }),
-            make('span', { text: 'Reference sequence and ruler: always shown' })
-        ])];
+        var words = searchWords(state.trackQuery);
+        var shown = state.tracks.filter(function (t) { return trackMatches(t, words); });
+        var rows = [];
+        if (!words.length) {
+            rows.push(make('li', { class: 'gb-sequence-row' }, [
+                make('span', { class: 'gb-dot', text: '✓', 'aria-hidden': 'true' }),
+                make('span', { text: 'Reference sequence and ruler: always shown' })
+            ]));
+        }
         if (!state.tracks.length) {
             rows.push(make('li', { class: 'gb-sequence-row' }, [
                 make('span', { class: 'gb-dot', text: '' }),
                 make('span', { text: 'No tracks for this genome yet. Tracks are BigWig, BED or GFF files added to it.' })
             ]));
+        } else if (!shown.length) {
+            rows.push(make('li', { class: 'gb-no-match', text: 'No track on this genome matches “' + state.trackQuery.trim() + '”.' }));
         }
-        state.tracks.forEach(function (t) {
+        shown.forEach(function (t) {
             var box = make('input', { type: 'checkbox', value: t.id });
             box.checked = state.selected.has(t.id);
             box.addEventListener('change', function () {
                 if (box.checked) { state.selected.add(t.id); } else { state.selected.delete(t.id); }
                 updateOpenHint();
             });
-            var kind = trackKind(t.type) + (t.visibility === 'suite' ? ' · shared with everyone' : '');
-            rows.push(make('li', {}, [make('label', { class: 'gb-track' }, [
-                box,
-                make('span', { class: 'gb-track-text' }, [
-                    make('span', { class: 'gb-track-name', text: t.name }),
-                    make('span', { class: 'gb-track-kind', text: kind })
-                ])
-            ])]));
+            var kind = trackKind(t.type) + (t.visibility === 'suite' ? ' · shared with everyone'
+                : t.visibility === 'labs' ? ' · shared with other labs'
+                : t.visibility === 'chair_group' ? ' · shared with the chair group' : '');
+            rows.push(make('li', { class: 'gb-track-row' }, [
+                make('label', { class: 'gb-track' }, [
+                    box,
+                    make('span', { class: 'gb-track-text' }, [
+                        make('span', { class: 'gb-track-name' }, highlighted(t.name, words)),
+                        make('span', { class: 'gb-track-kind', text: kind })
+                    ])
+                ]),
+                make('button', {
+                    type: 'button', class: 'gb-link gb-track-share', text: 'Share',
+                    title: 'See and change which labs see “' + t.name + '”',
+                    onclick: function () { openShare('track', t); }
+                })
+            ]));
         });
         list.replaceChildren.apply(list, rows);
         el('track-actions').hidden = state.tracks.length < 2;
+        el('track-search-count').textContent = words.length
+            ? shown.length + ' of ' + state.tracks.length + ' track' + (state.tracks.length === 1 ? '' : 's')
+            : '';
+        el('tracks-shown').hidden = !words.length || !shown.length;
+        renderElsewhere();
+    }
+
+    // Ticks every track the search shows (and keeps those already ticked).
+    function tickShown() {
+        var words = searchWords(state.trackQuery);
+        state.tracks.forEach(function (t) { if (trackMatches(t, words)) { state.selected.add(t.id); } });
+        renderTracks();
+        updateOpenHint();
+    }
+
+    // The member's other genomes' track lists, read once when a search first
+    // needs them, so a track on the wrong genome is still found.
+    function otherTracks() {
+        if (state.otherTracks) { return state.otherTracks; }
+        var others = state.genomes.filter(function (g) { return !state.genome || g.id !== state.genome.id; });
+        state.otherTracks = Promise.all(others.map(function (g) {
+            return getJSON(API + '/genomes/' + encodeURIComponent(g.id) + '/tracks')
+                .then(function (tracks) { return tracks.map(function (t) { t.genome = g; return t; }); })
+                .catch(function () { return []; });
+        })).then(function (lists) { return [].concat.apply([], lists); });
+        return state.otherTracks;
+    }
+
+    function renderElsewhere() {
+        var box = el('track-elsewhere');
+        var words = searchWords(state.trackQuery);
+        if (!words.length || state.genomes.length < 2) { box.hidden = true; return; }
+        var query = state.trackQuery;
+        otherTracks().then(function (all) {
+            if (state.trackQuery !== query) { return; }   // typed on since
+            var found = all.filter(function (t) {
+                return (!state.genome || t.genome.id !== state.genome.id) && trackMatches(t, words);
+            });
+            box.hidden = !found.length;
+            var list = el('track-elsewhere-list');
+            list.replaceChildren.apply(list, found.slice(0, 20).map(function (t) {
+                return make('li', {}, [
+                    make('span', { class: 'gb-track-text' }, [
+                        make('span', { class: 'gb-track-name' }, highlighted(t.name, words)),
+                        make('span', { class: 'gb-track-kind', text: trackKind(t.type) + ' · on ' + t.genome.name })
+                    ]),
+                    make('button', {
+                        type: 'button', class: 'tt-btn', text: 'Go to that genome',
+                        onclick: function () {
+                            state.tickAfterLoad = t.id;
+                            chooseGenome(t.genome.id, false);
+                        }
+                    })
+                ]);
+            }));
+            if (found.length > 20) {
+                list.appendChild(make('li', { class: 'gb-no-match', text: (found.length - 20) + ' more: type more of the name to narrow it.' }));
+            }
+        });
     }
 
     function setAllTracks(on) {
@@ -406,7 +529,7 @@
                 tracks: enabled.map(function (id) { return trackConfig(byId[id], (view.options || {})[id]); }),
                 showCenterGuide: false,
                 showSampleNames: false,
-                // Several tracks at once are changed in Track settings instead.
+                // Several tracks at once are changed in Bulk track settings instead.
                 showMultiSelectButton: false
             };
             if (view.locus) { options.locus = view.locus; }
@@ -534,7 +657,10 @@
         var last = state.lastClick;
         var isDouble = now - last.t < 450 && Math.abs(event.clientX - last.x) < 6 && Math.abs(event.clientY - last.y) < 6;
         state.lastClick = { t: isDouble ? 0 : now, x: event.clientX, y: event.clientY };
-        if (!isDouble) { return; }
+        if (!isDouble) {
+            clearIfOutside(event);
+            return;
+        }
         var feature = featureAt(event);
         if (!feature) { return; }
         event.stopPropagation();
@@ -574,6 +700,22 @@
     function bpAt(x, area) {
         var clamped = Math.min(Math.max(x, area.left), area.right);
         return area.frame.start + (clamped - area.left) * area.frame.bpPerPixel;
+    }
+
+    // A single click on the tracks outside the selected stretch clears it, as
+    // clicking away from a selection does anywhere else. Not a click that
+    // ended a drag along the genome, and not one inside the selection.
+    function clearIfOutside(event) {
+        var sel = state.selection;
+        var down = state.downAt;
+        if (!sel || !down) { return; }
+        if (Math.abs(event.clientX - down.x) > 3 || Math.abs(event.clientY - down.y) > 3) { return; }
+        var area = trackArea();
+        if (!area || event.clientX < area.left || event.clientX > area.right ||
+            event.clientY < area.top || event.clientY > area.bottom) { return; }
+        var bp = bpAt(event.clientX, area);
+        if (area.frame.chr === sel.chrom && bp >= sel.start && bp <= sel.end) { return; }
+        setSelection(null);
     }
 
     function setSelectMode(on) {
@@ -661,7 +803,7 @@
             el('selection-actions').hidden = true;
             text.replaceChildren(
                 make('strong', { text: 'Nothing selected.' }),
-                make('span', { text: 'Shift-drag across the tracks (or turn on Select region) to highlight any stretch; double-click a feature to select exactly it.' }));
+                make('span', { text: 'Shift-drag across the tracks (or turn on Select region) to highlight any stretch; double-click a feature to select exactly it. Click outside a selection to clear it.' }));
             if (state.browser && state.browser.clearROIs) { try { state.browser.clearROIs(); } catch (e) { /* gone */ } }
             return;
         }
@@ -1107,6 +1249,7 @@
 
     // Once a batch is through, the chosen genome's list is read again.
     function refreshAfterUploads() {
+        state.otherTracks = null;      // a search reads the other genomes' lists again
         if (state.genome) { chooseGenome(state.genome.id, true); }
         renderPending();
     }
@@ -1194,6 +1337,12 @@
             : [];
     }
 
+    function panelTrackMatches(t, words) {
+        if (!words.length) { return true; }
+        var text = (t.name + ' ' + (t.type === 'wig' ? 'coverage bigwig' : 'features gene annotation')).toLowerCase();
+        return words.every(function (w) { return text.indexOf(w) >= 0; });
+    }
+
     function checkedTracks() {
         var ids = state.panelChecked || new Set();
         return panelTracks().filter(function (t) { return ids.has(t.config.trellisId); });
@@ -1207,12 +1356,16 @@
 
     function renderTrackPanel() {
         if (el('tracks-panel').hidden) { return; }
-        var tracks = panelTracks();
-        var present = new Set(tracks.map(function (t) { return t.config.trellisId; }));
+        var all = panelTracks();
+        var present = new Set(all.map(function (t) { return t.config.trellisId; }));
+        var words = searchWords(el('tp-search').value);
+        var tracks = all.filter(function (t) { return panelTrackMatches(t, words); });
         state.panelChecked = new Set(Array.from(state.panelChecked || []).filter(function (id) { return present.has(id); }));
         var list = el('tp-tracks');
-        if (!tracks.length) {
+        if (!all.length) {
             list.replaceChildren(make('li', {}, [make('label', { text: 'No tracks are open. Add some with Change genome or tracks.' })]));
+        } else if (!tracks.length) {
+            list.replaceChildren(make('li', {}, [make('label', { text: 'No open track matches that.' })]));
         } else {
             list.replaceChildren.apply(list, tracks.map(function (t) {
                 var id = t.config.trellisId;
@@ -1226,7 +1379,7 @@
                 swatch.style.background = t.color || (t.type === 'wig' ? 'rgb(150,150,150)' : 'rgb(0,0,150)');
                 return make('li', {}, [make('label', {}, [
                     box, swatch,
-                    make('span', { class: 'gb-tp-name', text: t.name }),
+                    make('span', { class: 'gb-tp-name' }, highlighted(t.name, words)),
                     make('span', { class: 'gb-tp-kind', text: t.type === 'wig' ? 'coverage' : 'features' })
                 ])]);
             }));
@@ -1477,6 +1630,158 @@
     }
 
     // ------------------------------------------------------------------
+    // Sharing a genome or a track with other labs
+    // ------------------------------------------------------------------
+
+    function allLabs() {
+        if (!state.labs) {
+            state.labs = getJSON(API + '/labs').catch(function (err) { state.labs = null; throw err; });
+        }
+        return state.labs;
+    }
+
+    // kind is 'genome' or 'track'; item is the genome or track from the lists.
+    function openShare(kind, item) {
+        state.share = { kind: kind, item: item };
+        var form = el('share-form');
+        form.querySelector('.gb-error').hidden = true;
+        el('share-done').hidden = true;
+        el('share-title').textContent = 'Share “' + item.name + '”';
+        el('share-list').replaceChildren(make('li', { text: 'Loading…' }));
+        el('share-add').hidden = true;
+        el('share-intro').textContent = '';
+        el('share-dialog').showModal();
+        loadShare();
+    }
+
+    function sharePath() {
+        var s = state.share;
+        return API + (s.kind === 'genome' ? '/genomes/' : '/tracks/') + encodeURIComponent(s.item.id);
+    }
+
+    function loadShare() {
+        var s = state.share;
+        return Promise.all([getJSON(sharePath() + '/shares'), allLabs()]).then(function (res) {
+            s.info = res[0];
+            renderShare(res[0], res[1]);
+        }).catch(function (err) {
+            formError(el('share-form'), ['Could not read who sees it: ' + err.message]);
+        });
+    }
+
+    function renderShare(info, labs) {
+        var s = state.share;
+        var list = el('share-list');
+        var rows = [];
+        function row(who, why, removable) {
+            var li = make('li', {}, [make('span', { class: 'gb-share-who', text: who }), make('span', { class: 'gb-share-why', text: why })]);
+            if (removable) {
+                li.appendChild(make('button', {
+                    type: 'button', class: 'gb-link', text: 'Remove',
+                    onclick: function () { changeShare(removable, false); }
+                }));
+            }
+            return li;
+        }
+        if (info.suite) {
+            rows.push(row('Everyone in the suite', s.kind === 'genome' ? 'a suite reference genome' : 'an administrator\'s track on a suite genome', null));
+        } else if (s.kind === 'genome') {
+            info['default'].forEach(function (d) {
+                rows.push(row(d.name, d.role === 'owner' ? 'owner lab' : 'its chair group, by default', null));
+            });
+            info.shares.forEach(function (x) {
+                var why = (x.type === 'chair_group' ? 'chair group, ' : '') +
+                    (x.auto ? 'through a shared track' : 'shared');
+                rows.push(row(x.name, why, info.can_change && !x.auto ? x : null));
+            });
+        } else {
+            rows.push(row(info.owner_lab.name, 'owner lab', null));
+            info.shares.forEach(function (x) {
+                rows.push(row(x.name, x.type === 'chair_group' ? 'its chair group, shared' : 'shared', info.can_change ? x : null));
+            });
+        }
+        list.replaceChildren.apply(list, rows);
+
+        var intro = '';
+        if (info.suite) {
+            intro = 'Everyone in the suite sees this already.';
+        } else if (!info.can_change) {
+            intro = 'Only members of ' + info.owner_lab.name + ' can change who sees this.';
+        } else if (s.kind === 'track') {
+            intro = 'A lab you share this track with also gets its genome, if it cannot see it yet, so the track can be opened.';
+        } else {
+            intro = 'Labs and chair groups you share this genome with can open it and add their own tracks to it.';
+        }
+        el('share-intro').textContent = intro;
+        el('share-add').hidden = info.suite || !info.can_change;
+        if (el('share-add').hidden) { return; }
+
+        // What it can still be shared with.
+        var taken = new Set(info.shares.map(function (x) { return x.type + ':' + x.id; }));
+        var owner = info.owner_lab && info.owner_lab.id;
+        if (s.kind === 'genome') { info['default'].forEach(function (d) { taken.add(d.type + ':' + d.id); }); }
+        var select = el('share-target');
+        var options = [make('option', { value: '', text: 'Choose a lab or chair group…' })];
+        var groupOptions = [];
+        if (s.kind === 'genome') {
+            labs.chair_groups.forEach(function (g) {
+                if (!taken.has('chair_group:' + g.id)) {
+                    groupOptions.push(make('option', { value: 'chair_group:' + g.id, text: g.name + ' (every lab in it)' }));
+                }
+            });
+        } else if (info.owner_chair_group && !taken.has('chair_group:' + info.owner_chair_group.id)) {
+            groupOptions.push(make('option', { value: 'chair_group:' + info.owner_chair_group.id, text: info.owner_chair_group.name + ' (your chair group, every lab in it)' }));
+        }
+        if (groupOptions.length) { options.push(make('optgroup', { label: 'Chair groups' }, groupOptions)); }
+        var labOptions = labs.labs.filter(function (l) { return l.id !== owner && !taken.has('lab:' + l.id); })
+            .map(function (l) { return make('option', { value: 'lab:' + l.id, text: l.name + (l.chair_group ? ' (' + l.chair_group + ')' : '') }); });
+        if (labOptions.length) { options.push(make('optgroup', { label: 'Labs' }, labOptions)); }
+        select.replaceChildren.apply(select, options);
+        el('share-note').textContent = labOptions.length || groupOptions.length ? '' : 'It is shared with every lab already.';
+    }
+
+    function changeShare(target, grant) {
+        var s = state.share;
+        var body;
+        if (s.kind === 'track') {
+            body = target.type === 'chair_group' ? { chair_group: true } : { labs: [target.id] };
+        } else {
+            body = target.type === 'chair_group' ? { chair_group_id: target.id } : { labs: [target.id] };
+        }
+        var form = el('share-form');
+        form.querySelector('.gb-error').hidden = true;
+        el('share-done').hidden = true;
+        return fetch(sharePath() + '/share', {
+            method: grant ? 'POST' : 'DELETE', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(function (r) {
+            return r.json().then(function (b) {
+                if (!r.ok) { throw new Error(b.error || ('HTTP ' + r.status)); }
+                return b;
+            });
+        }).then(function (b) {
+            var notes = [];
+            var name = target.name || target.id;
+            notes.push(grant ? 'Shared with ' + name + '.' : name + ' no longer sees it.');
+            if (b.genome_shared_with && b.genome_shared_with.length) {
+                notes.push('So that the track can be opened, the genome “' + (state.genome ? state.genome.name : '') +
+                    '” is now shared with ' + b.genome_shared_with.map(function (g) { return g.name; }).join(', ') + ' too.');
+            }
+            if (b.kept && b.kept.length) {
+                notes.push(b.kept.map(function (k) { return k.name; }).join(', ') +
+                    ' still sees the genome, because a track on it is shared with them.');
+            }
+            el('share-done').textContent = notes.join(' ');
+            el('share-done').hidden = false;
+            state.otherTracks = null;
+            return loadShare();
+        }).catch(function (err) {
+            formError(form, ['Could not change it: ' + err.message]);
+        });
+    }
+
+    // ------------------------------------------------------------------
     // Routing
     // ------------------------------------------------------------------
 
@@ -1486,6 +1791,19 @@
     }
 
     el('choose-form').addEventListener('submit', function (e) { e.preventDefault(); openFromChoice(); });
+    el('track-search').addEventListener('input', function () {
+        state.trackQuery = el('track-search').value;
+        renderTracks();
+    });
+    el('track-search').addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && el('track-search').value) {
+            e.preventDefault();
+            el('track-search').value = '';
+            state.trackQuery = '';
+            renderTracks();
+        }
+    });
+    el('tracks-shown').addEventListener('click', tickShown);
     el('tracks-all').addEventListener('click', function () { setAllTracks(true); });
     el('tracks-none').addEventListener('click', function () { setAllTracks(false); });
     el('locus').addEventListener('input', function () { el('locus-error').hidden = true; });
@@ -1501,6 +1819,20 @@
         showChoose(id, true);
     });
     window.addEventListener('popstate', route);
+
+    el('share-genome').addEventListener('click', function () { if (state.genome) { openShare('genome', state.genome); } });
+    el('share-go').addEventListener('click', function () {
+        var value = el('share-target').value;
+        if (!value) { formError(el('share-form'), ['Choose a lab or chair group first.']); return; }
+        var cut = value.indexOf(':');
+        var option = el('share-target').selectedOptions[0];
+        changeShare({ type: value.slice(0, cut), id: value.slice(cut + 1), name: option ? option.textContent.replace(/ \(.*\)$/, '') : '' }, true);
+    });
+    el('share-close').addEventListener('click', function () {
+        el('share-dialog').close();
+        // Visibility labels in the list may have changed.
+        if (state.genome && !el('choose').hidden) { chooseGenome(state.genome.id, true); }
+    });
 
     el('add-genome').addEventListener('click', openGenomeDialog);
     el('add-track').addEventListener('click', openTrackDialog);
@@ -1552,10 +1884,15 @@
 
     el('tracks-toggle').addEventListener('click', function () { showTrackPanel(el('tracks-panel').hidden); });
     el('tracks-panel-close').addEventListener('click', function () { showTrackPanel(false); });
+    // With a search typed, Select all ticks the tracks it shows (and keeps the rest).
     el('tp-all').addEventListener('click', function () {
-        state.panelChecked = new Set(panelTracks().map(function (t) { return t.config.trellisId; }));
+        var words = searchWords(el('tp-search').value);
+        panelTracks().forEach(function (t) {
+            if (panelTrackMatches(t, words)) { state.panelChecked.add(t.config.trellisId); }
+        });
         renderTrackPanel();
     });
+    el('tp-search').addEventListener('input', renderTrackPanel);
     el('tp-none').addEventListener('click', function () { state.panelChecked = new Set(); renderTrackPanel(); });
     Array.prototype.forEach.call(document.querySelectorAll('#tp-controls [data-height]'), function (b) {
         b.addEventListener('click', function () { setHeight(b.getAttribute('data-height')); });
@@ -1564,10 +1901,28 @@
     el('tp-swatches').replaceChildren.apply(el('tp-swatches'), PALETTE.map(function (c) {
         var b = make('button', { type: 'button', title: c, 'aria-label': 'Colour ' + c });
         b.style.background = c;
-        b.addEventListener('click', function () { setColour(c); });
+        b.addEventListener('click', function () { el('tp-hex').value = c; el('tp-color').value = c; setColour(c); });
         return b;
     }));
-    el('tp-color').addEventListener('change', function () { setColour(el('tp-color').value); });
+    el('tp-color').addEventListener('change', function () {
+        el('tp-hex').value = el('tp-color').value;
+        setColour(el('tp-color').value);
+    });
+    // A hex code: #1f5fa8, 1f5fa8 or the short #15a; anything else is refused with an example.
+    el('tp-hex-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var raw = el('tp-hex').value.trim().replace(/^#/, '');
+        if (!/^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw)) {
+            el('tp-error').textContent = 'A hex colour is six (or three) of 0-9 and a-f, such as #1f5fa8.';
+            el('tp-error').hidden = false;
+            return;
+        }
+        if (raw.length === 3) { raw = raw.split('').map(function (c) { return c + c; }).join(''); }
+        var hex = '#' + raw.toLowerCase();
+        el('tp-hex').value = hex;
+        el('tp-color').value = hex;
+        setColour(hex);
+    });
     el('tp-color-reset').addEventListener('click', resetColour);
     Array.prototype.forEach.call(document.querySelectorAll('#tp-controls [data-display]'), function (b) {
         b.addEventListener('click', function () { setDisplay(b.getAttribute('data-display')); });
@@ -1584,6 +1939,10 @@
     el('figure-close').addEventListener('click', function () { el('figure-dialog').close(); });
 
     el('igv-container').addEventListener('click', onClickCapture, true);
+    // Where each press on the tracks began, to tell a click from a drag.
+    el('igv-container').addEventListener('mousedown', function (e) {
+        state.downAt = { x: e.clientX, y: e.clientY };
+    }, true);
     el('igv-container').addEventListener('mousedown', onMouseDownCapture, true);
     el('select-mode').addEventListener('click', function () { setSelectMode(!state.selectMode); });
     el('select-form').addEventListener('submit', selectTyped);
