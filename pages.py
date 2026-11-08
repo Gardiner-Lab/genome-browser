@@ -279,8 +279,10 @@ def help_html(static_prefix: str, prefix: str) -> str:
       </ul>
       <p>To share, a member of the lab that owns it opens <b>Share</b>: <b>Share genome</b> beside the genome
          list, or <b>Share</b> at the right of a track. It lists who sees it and why, and shares it with
-         another <b>lab</b> or a whole <b>chair group</b>; <b>Remove</b> takes a share back. Anyone else
-         sees the list but cannot change it.</p>
+         another <b>lab</b> or a whole <b>chair group</b>; <b>Remove</b> takes a share back. It can be changed
+         at any time, as often as you like: add and remove one at a time. Even a genome's own chair group,
+         which sees it from the start, can be removed, so only your lab sees it, and added back. Anyone
+         else sees the list but cannot change it.</p>
       <p>A track is only any use to someone who can see its genome, so <b>sharing a track with a lab that
          cannot see its genome shares the genome with that lab too</b>. That share is marked <i>through a
          shared track</i> and goes again when no track on the genome is shared with the lab any more. If the

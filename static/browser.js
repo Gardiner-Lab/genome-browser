@@ -1687,7 +1687,9 @@
             rows.push(row('Everyone in the suite', s.kind === 'genome' ? 'a suite reference genome' : 'an administrator\'s track on a suite genome', null));
         } else if (s.kind === 'genome') {
             info['default'].forEach(function (d) {
-                rows.push(row(d.name, d.role === 'owner' ? 'owner lab' : 'its chair group, by default', null));
+                // The owner lab always sees it; its chair group, by default, can be taken away (and added back).
+                rows.push(row(d.name, d.role === 'owner' ? 'owner lab' : 'its chair group, by default',
+                    info.can_change && d.role === 'default' ? { type: 'chair_group', id: d.id, name: d.name } : null));
             });
             info.shares.forEach(function (x) {
                 var why = (x.type === 'chair_group' ? 'chair group, ' : '') +
@@ -1724,9 +1726,11 @@
         var options = [make('option', { value: '', text: 'Choose a lab or chair group…' })];
         var groupOptions = [];
         if (s.kind === 'genome') {
+            var ownGroup = info.owner_chair_group && info.owner_chair_group.id;
             labs.chair_groups.forEach(function (g) {
                 if (!taken.has('chair_group:' + g.id)) {
-                    groupOptions.push(make('option', { value: 'chair_group:' + g.id, text: g.name + ' (every lab in it)' }));
+                    groupOptions.push(make('option', { value: 'chair_group:' + g.id,
+                        text: g.name + (g.id === ownGroup ? ' (your chair group, every lab in it)' : ' (every lab in it)') }));
                 }
             });
         } else if (info.owner_chair_group && !taken.has('chair_group:' + info.owner_chair_group.id)) {

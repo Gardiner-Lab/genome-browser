@@ -9,6 +9,15 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
+### Changed
+- **Sharing can be changed at any time, not only set once.** A genome's own chair group, which sees it
+  from the moment it is uploaded, now has **Remove** in the Share dialog like any other share: the
+  genome is then seen by its owner lab alone (plus anything shared on purpose), and the chair group
+  can be added back from the list. Shares with other labs and chair groups were already added and
+  removed one at a time; the help says so.
+
 ## [0.5.0] - 2026-11-08
 
 ### Demo

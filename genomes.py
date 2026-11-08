@@ -408,6 +408,17 @@ def _mutate_genome_share(genome_id, grant: bool):
                 or any(set(labs_reader.labs_in_chair_group(g)) - labs_reader.demo_lab_ids() for g in groups)):
             return jsonify({'error': 'The demo shares with the demo labs only.'}), 400
 
+        # The owner lab's own chair group sees a genome by default. It is not a share row but the
+        # genome's visibility: taking it away narrows the genome to the owner lab, adding it back
+        # restores the default, so what was set when it was uploaded can be changed later.
+        named_groups = list(groups)
+        owner_group = labs_reader.chair_group_of(genome['owner_lab'])
+        if owner_group and owner_group in groups:
+            groups = [g for g in groups if g != owner_group]
+            conn.execute('UPDATE reference_genomes SET genome_visibility = ? WHERE id = ?',
+                         (VISIBILITY_CHAIR_GROUP if grant else VISIBILITY_OWNER_LAB, genome_id))
+            conn.execute('DELETE FROM genome_shares WHERE genome_id = ? AND chair_group_id = ? AND auto = 0',
+                         (genome_id, owner_group))
         if grant:
             for group in groups:
                 conn.execute(
@@ -429,11 +440,13 @@ def _mutate_genome_share(genome_id, grant: bool):
                              'AND auto = 0', (genome_id, lab))
         sharing.sync_genome_access(conn, genome_id, member)
         conn.commit()
+        genome = _load_genome(conn, genome_id)
         body = sharing.genome_share_body(conn, member, genome)
     finally:
         conn.close()
 
     # Kept for older callers: the one chair group a request named.
+    groups = named_groups
     body['chair_group_id'] = groups[0] if len(groups) == 1 and not labs else None
     body['shared'] = grant
     if not grant:

@@ -107,6 +107,7 @@ def genome_share_body(conn, member: str, genome) -> Dict:
         default.append(dict(_named('lab', owner), role='owner'))
         group = labs_reader.chair_group_of(owner)
         if group and genome['genome_visibility'] == 'chair_group_default':
+            # Removable: taking it away narrows the genome to its owner lab (genomes.py).
             default.append(dict(_named('chair_group', group), role='default'))
     shares = []
     for row in conn.execute('SELECT chair_group_id, auto FROM genome_shares WHERE genome_id = ? '
@@ -120,6 +121,9 @@ def genome_share_body(conn, member: str, genome) -> Dict:
         'owner_lab': _named('lab', owner) if not suite else None,
         'can_change': (not suite) and access.is_owner_lab_member(member, owner),
         'default': default, 'shares': shares,
+        # The owner lab's chair group, which sees it by default: removable, and addable again.
+        'owner_chair_group': (_named('chair_group', labs_reader.chair_group_of(owner))
+                              if not suite and labs_reader.chair_group_of(owner) else None),
     }
 
 

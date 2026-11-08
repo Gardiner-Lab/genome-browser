@@ -178,3 +178,30 @@ def test_the_demo_sees_only_the_demos(world, monkeypatch):
     listed = w['call']('GET', '/api/labs', user='carol').get_json()
     assert {lab['id'] for lab in listed['labs']} == {'labX', 'labY'}
     assert [g['id'] for g in listed['chair_groups']] == ['cgX']
+
+
+def test_a_genomes_own_chair_group_can_be_taken_away_and_given_back(world):
+    """Who sees a genome is not fixed at upload: its default chair group goes, and comes back."""
+    w = world
+    import db as db_module
+    conn = db_module.connect(w['root'] / 'genome.db')
+    conn.execute("UPDATE reference_genomes SET owner_lab = 'labX', genome_visibility = 'chair_group_default' "
+                 "WHERE id = ?", (w['genome'],))
+    conn.commit()
+    conn.close()
+    path = f"/api/genomes/{w['genome']}"
+    assert _sees_genome(w, 'dave')                      # labY, in labX's chair group cgX
+    info = w['call']('GET', path + '/shares', user='carol').get_json()
+    assert [d['role'] for d in info['default']] == ['owner', 'default'] and info['owner_chair_group']['id'] == 'cgX'
+    r = w['call']('DELETE', path + '/share', user='carol', body={'chair_group_id': 'cgX'})
+    assert r.status_code == 200, r.get_json()
+    assert [d['role'] for d in r.get_json()['default']] == ['owner']
+    assert not _sees_genome(w, 'dave') and _sees_genome(w, 'carol')
+    # And back, and other shares added and removed alongside.
+    assert w['call']('POST', path + '/share', user='carol', body={'labs': ['labA']}).status_code == 200
+    assert w['call']('POST', path + '/share', user='carol', body={'chair_group_id': 'cgX'}).status_code == 200
+    assert _sees_genome(w, 'dave') and _sees_genome(w, 'alice')
+    assert w['call']('DELETE', path + '/share', user='carol', body={'labs': ['labA']}).status_code == 200
+    assert not _sees_genome(w, 'alice')
+    # Only the owner lab changes it.
+    assert w['call']('DELETE', path + '/share', user='alice', body={'chair_group_id': 'cgX'}).status_code in (403, 404)
