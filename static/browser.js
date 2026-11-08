@@ -1483,12 +1483,20 @@
     function currentFigure() {
         var svg = state.browser.toSVG();
         var locus = currentLocus(state.browser);
-        var tracks = state.browser.findTracks(function (t) { return t.config && t.config.trellisId; })
-            .map(function (t) { return t.name; });
+        var shown = state.browser.findTracks(function (t) { return t.config && t.config.trellisId; });
+        var tracks = shown.map(function (t) { return t.name; });
+        var byId = {};
+        (state.tracks || []).forEach(function (t) { byId[t.id] = t; });
+        var recipe = { kind: 'view', tracks: shown.map(function (t) {
+            var known = byId[t.config.trellisId] || {};
+            var range = t.dataRange || {};
+            return { id: t.config.trellisId, name: t.name, type: known.type, color: t.color || t.config.color,
+                     height: t.height, displayMode: t.displayMode, autoscale: t.autoscale, min: range.min, max: range.max };
+        }) };
         var sel = state.selection;
         var base = ['genome-browser', state.genome.assembly_id, locus.replace(/,/g, '')].join('_')
             .replace(/[^\w.-]+/g, '_');
-        return { svg: svg, locus: locus, tracks: tracks, selection: sel, filename: base };
+        return { svg: svg, locus: locus, tracks: tracks, selection: sel, filename: base, recipe: recipe };
     }
 
     // The SVG drawn onto a canvas, twice the size for a sharp page: the
@@ -1519,6 +1527,7 @@
 
     function defaultFigureTitle(fig) {
         if (fig.kind === 'circos') { return 'Circos plot: ' + (fig.title || state.genome.assembly_id + ', ' + fig.locus); }
+        if (fig.kind === 'analysis') { return 'Genome Browser: ' + (fig.title || 'analysis') + ' (' + state.genome.assembly_id + ')'; }
         var what = fig.selection && fig.selection.name ? fig.selection.name + ', ' : '';
         return 'Genome Browser: ' + what + state.genome.assembly_id + ' ' + fig.locus;
     }
@@ -1536,12 +1545,18 @@
                 return;
             }
         }
-        el('figure-dialog-title').textContent = fig.kind === 'circos' ? 'Circos plot' : 'Save this view as a figure';
+        el('figure-dialog-title').textContent = fig.kind === 'circos' ? 'Circos plot'
+            : fig.kind === 'analysis' ? (fig.title || 'Analysis') : 'Save this view as a figure';
         el('figure-what').textContent = fig.kind === 'circos'
             ? 'The ' + fig.locus + ' with the tracks shown, as rings (outermost first, as in the legend), binned by ' +
               fig.binSize.toLocaleString('en-US') + ' bp. Circos’s own files can be downloaded to change it and run Circos again.'
             : 'Exactly what is on screen: the tracks, the position and any selection.';
         el('figure-circos-files').hidden = !fig.bundle;
+        if (fig.kind === 'analysis') { el('figure-what').textContent = fig.about || ''; }
+        var dl = el('figure-downloads');
+        dl.replaceChildren.apply(dl, (fig.downloads || []).map(function (d) {
+            return make('a', { class: 'gb-link', href: d.url, download: d.filename, text: d.label });
+        }));
         if (fig.notes && fig.notes.length) {
             el('figure-what').textContent += ' ' + fig.notes.join(' ');
         }
@@ -1553,7 +1568,8 @@
         el('figure-save').hidden = !NOTEBOOK;
         el('figure-save').disabled = false;
         el('figure-where').textContent = NOTEBOOK
-            ? 'Saving makes a page under today in your Lab Notebook, with the picture, a note of what it shows, and the SVG to download for papers and posters.'
+            ? 'Saving makes a page under today in your Lab Notebook, with the picture, a note of what it shows, and the SVG ' +
+              'to download for papers and posters; and under it a page with the code and files to make the figure again.'
             : '';
         el('figure-dialog').showModal();
         form.elements.title.focus();
@@ -1723,6 +1739,764 @@
         el('circos-form').elements.where.value = 'region';
     });
 
+    // ------------------------------------------------------------------
+    // Analyse: profiles, heatmaps, differences, replicate checks, tables, bar charts, dot plots
+    // ------------------------------------------------------------------
+
+    var ANALYSES = {
+        profile: { label: 'Profile around features, and heatmap',
+            about: 'The average signal of the coverage tracks chosen across a set of features (genes, transposons, ' +
+                   'the regions of a BED track), scaled from start to end, with the stretch before and after. Tick ' +
+                   'Heatmap for every feature as a row as well. On a whole genome this takes a few minutes.',
+            needs: ['tracks', 'features', 'profile'] },
+        compare: { label: 'Difference between two tracks (a new track)',
+            about: 'A new coverage track of one track against another (A minus B, or their log2 ratio), kept for your ' +
+                   'lab: show it like any other track, in the browser and in Circos plots.',
+            needs: ['compare'] },
+        correlation: { label: 'Replicate check: correlation and PCA',
+            about: 'How alike the coverage tracks chosen are along the whole genome, in bins: a correlation heatmap ' +
+                   'and a principal component plot. Replicates should sit together, and mutants apart.',
+            needs: ['tracks', 'correlation'] },
+        genes: { label: 'Signal per feature (a table)',
+            about: 'The mean signal of each coverage track over every feature of a type (for example each gene), ' +
+                   'as a CSV table to sort and filter. With two tracks, their difference too.',
+            needs: ['tracks', 'features'] },
+        bars: { label: 'Tracks over the selection (bar chart)',
+            about: 'The mean signal of each coverage track over the selection you made in the browser, as bars.',
+            needs: ['tracks', 'selection'] },
+        dotplot: { label: 'Synteny dot plot (links track)',
+            about: 'A links (BEDPE) track drawn with the genome along both sides: each link a line from one region ' +
+                   'to the other, so collinear blocks show as diagonals.',
+            needs: ['links'] }
+    };
+
+    function genomeTracks(type) {
+        return (state.tracks || []).filter(function (t) {
+            return (Array.isArray(type) ? type.indexOf(t.type) >= 0 : t.type === type) && (!t.track_status || t.track_status === 'ready');
+        });
+    }
+
+    function shownIds() {
+        return new Set(shownTracks().map(function (t) { return t.id; }));
+    }
+
+    function openAnalyseDialog() {
+        if (!state.genome) { return; }
+        var form = el('analyse-form');
+        form.querySelector('.gb-error').hidden = true;
+        el('analyse-status').textContent = '';
+        el('analyse-result').replaceChildren();
+        var kind = el('analyse-kind');
+        kind.replaceChildren.apply(kind, Object.keys(ANALYSES).map(function (k) {
+            return make('option', { value: k, text: ANALYSES[k].label });
+        }));
+        kind.value = state.analyseKind || 'profile';
+
+        // Coverage tracks, the shown ones ticked.
+        var shown = shownIds();
+        var coverage = genomeTracks('bigwig');
+        var list = el('analyse-tracks');
+        list.replaceChildren.apply(list, coverage.length ? coverage.map(function (t) {
+            var box = make('input', { type: 'checkbox', value: t.id });
+            box.checked = shown.has(t.id);
+            return make('label', {}, [box, document.createTextNode(' ' + t.name)]);
+        }) : [make('p', { class: 'gb-hint', text: 'This genome has no coverage tracks yet.' })]);
+
+        // Feature tracks for profiles and tables, and links tracks for the dot plot.
+        var features = genomeTracks(['gff', 'bed']);
+        var featureSelect = el('analyse-feature-track');
+        featureSelect.replaceChildren.apply(featureSelect, features.map(function (t) {
+            return make('option', { value: t.id, text: t.name + (t.type === 'gff' ? ' (gene annotation)' : ' (BED)') });
+        }));
+        var links = genomeTracks('bedpe');
+        var linkSelect = el('analyse-links-track');
+        linkSelect.replaceChildren.apply(linkSelect, links.length ? links.map(function (t) {
+            return make('option', { value: t.id, text: t.name });
+        }) : [make('option', { value: '', text: 'No links (BEDPE) tracks on this genome' })]);
+        ['analyse-a', 'analyse-b'].forEach(function (id, i) {
+            var s = el(id);
+            s.replaceChildren.apply(s, coverage.map(function (t) { return make('option', { value: t.id, text: t.name }); }));
+            if (coverage[i]) { s.value = coverage[i].id; }
+        });
+        var sel = state.selection;
+        el('analyse-selection-text').textContent = sel
+            ? sel.chrom + ':' + (sel.start + 1).toLocaleString('en-US') + '-' + sel.end.toLocaleString('en-US') +
+              ' (' + (sel.end - sel.start).toLocaleString('en-US') + ' bp)'
+            : 'Nothing is selected: select a region in the browser first (Shift + drag, or type it).';
+        showAnalyseFields();
+        loadFeatureTypes();
+        el('analyse-run').disabled = false;
+        el('analyse-dialog').showModal();
+    }
+
+    function showAnalyseFields() {
+        var kind = el('analyse-kind').value;
+        state.analyseKind = kind;
+        var needs = ANALYSES[kind].needs;
+        el('analyse-about').textContent = ANALYSES[kind].about;
+        Array.prototype.forEach.call(document.querySelectorAll('#analyse-form [data-for]'), function (part) {
+            part.hidden = part.getAttribute('data-for').split(' ').every(function (n) { return needs.indexOf(n) < 0 && n !== kind; });
+        });
+        el('analyse-type-hint').textContent = kind === 'genes'
+            ? 'Tick one type: each feature of it is a row of the table.'
+            : 'Tick up to four: each is drawn as its own line (genes and transposons, for example).';
+        el('analyse-run').textContent = kind === 'compare' ? 'Make the track' : 'Draw';
+    }
+
+    // The feature types of the chosen gene annotation or BED track, most common first.
+    function loadFeatureTypes() {
+        var id = el('analyse-feature-track').value;
+        var box = el('analyse-types');
+        if (!id) { box.replaceChildren(make('p', { class: 'gb-hint', text: 'This genome has no gene annotation or BED track.' })); return; }
+        box.replaceChildren(make('p', { class: 'gb-hint', text: 'Loading the feature types…' }));
+        getJSON(API + '/tracks/' + encodeURIComponent(id) + '/feature-types').then(function (res) {
+            var preferred = ['gene', 'transposable_element', 'transposable_element_gene'];
+            box.replaceChildren.apply(box, res.types.slice(0, 24).map(function (t, i) {
+                var input = make('input', { type: 'checkbox', value: t.type });
+                input.checked = preferred.indexOf(t.type) === 0 || (res.types.length === 1 && i === 0) ||
+                    (!res.types.some(function (x) { return x.type === 'gene'; }) && i === 0);
+                return make('label', {}, [input, document.createTextNode(' ' + t.type + ' (' + t.count.toLocaleString('en-US') + ')')]);
+            }));
+        }).catch(function (err) {
+            box.replaceChildren(make('p', { class: 'gb-hint', text: 'Could not read its feature types: ' + err.message }));
+        });
+    }
+
+    function checkedValues(container) {
+        return Array.prototype.filter.call(container.querySelectorAll('input[type=checkbox]'), function (b) { return b.checked; })
+            .map(function (b) { return b.value; });
+    }
+
+    function runAnalysis(event) {
+        event.preventDefault();
+        var form = el('analyse-form');
+        form.querySelector('.gb-error').hidden = true;
+        el('analyse-result').replaceChildren();
+        var kind = el('analyse-kind').value;
+        var tracks = checkedValues(el('analyse-tracks'));
+        var types = checkedValues(el('analyse-types'));
+        var names = form.elements.names.value.split(/[\s,;]+/).filter(Boolean);
+        var featureTrack = el('analyse-feature-track').value;
+
+        if (kind === 'bars') { return drawSelectionBars(tracks); }
+        if (kind === 'dotplot') { return drawDotPlot(el('analyse-links-track').value); }
+
+        var body = { kind: kind, tracks: tracks, title: form.elements.title.value.trim() };
+        if (kind === 'profile' || kind === 'genes') {
+            if (!featureTrack || !types.length) { formError(form, ['Choose the features: a track and at least one type.']); return; }
+            if (kind === 'genes' && types.length > 1) { formError(form, ['For a table, tick one feature type.']); return; }
+            if (types.length > 4) { formError(form, ['Tick at most four feature types.']); return; }
+            body.regions = types.map(function (t) { return { track: featureTrack, type: t, names: names }; });
+        }
+        if (kind === 'profile') {
+            Object.assign(body, { mode: form.elements.mode.value, before: Number(form.elements.flank.value),
+                after: Number(form.elements.flank.value), body: Number(form.elements.body.value),
+                bin: Number(form.elements.bin.value), heatmap: form.elements.heatmap.checked,
+                kmeans: Number(form.elements.kmeans.value), colormap: form.elements.colormap.value });
+        }
+        if (kind === 'correlation') {
+            if (tracks.length < 2) { formError(form, ['Tick at least two coverage tracks.']); return; }
+            Object.assign(body, { method: form.elements.method.value, bin: Number(form.elements.corr_bin.value) });
+        }
+        if (kind === 'compare') {
+            Object.assign(body, { a: el('analyse-a').value, b: el('analyse-b').value, operation: form.elements.operation.value,
+                bin: Number(form.elements.compare_bin.value), pseudocount: Number(form.elements.pseudocount.value) || 1,
+                name: form.elements.track_name.value.trim(), tracks: [] });
+            if (body.a === body.b) { formError(form, ['Choose two different tracks.']); return; }
+        }
+        if (kind !== 'compare' && !tracks.length) { formError(form, ['Tick at least one coverage track.']); return; }
+
+        el('analyse-run').disabled = true;
+        el('analyse-status').textContent = 'Starting…';
+        postJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/analyses', body).then(function (job) {
+            watchAnalysis(job.id, Date.now());
+        }).catch(function (err) {
+            formError(form, ['Could not start it: ' + err.message]);
+            el('analyse-run').disabled = false;
+            el('analyse-status').textContent = '';
+        });
+    }
+
+    // Asks after a job every few seconds until it is done, saying how long it has taken.
+    function watchAnalysis(id, since) {
+        var form = el('analyse-form');
+        getJSON(API + '/analyses/' + encodeURIComponent(id)).then(function (job) {
+            var secs = Math.round((Date.now() - since) / 1000);
+            var took = secs < 90 ? secs + ' s' : Math.round(secs / 60) + ' min';
+            if (job.state === 'queued' || job.state === 'running') {
+                el('analyse-status').textContent = job.state === 'queued'
+                    ? 'Waiting for ' + job.ahead + ' other job' + (job.ahead === 1 ? '' : 's') + ' to finish… (' + took + ')'
+                    : 'Working… (' + took + '). You can close this and keep browsing; it carries on.';
+                state.analyseTimer = setTimeout(function () { watchAnalysis(id, since); }, 3000);
+                return;
+            }
+            el('analyse-run').disabled = false;
+            if (job.state === 'failed') {
+                el('analyse-status').textContent = '';
+                formError(form, [job.error || 'It failed.']);
+                return;
+            }
+            el('analyse-status').textContent = 'Done in ' + took + '.';
+            showAnalysisResult(job);
+        }).catch(function (err) {
+            el('analyse-run').disabled = false;
+            formError(form, ['Lost track of it: ' + err.message]);
+        });
+    }
+
+    function analysisFile(job, name) {
+        return API + '/analyses/' + encodeURIComponent(job.id) + '/files/' + encodeURIComponent(name);
+    }
+
+    function fetchText(url) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+            if (!r.ok) { throw new Error('HTTP ' + r.status); }
+            return r.text();
+        });
+    }
+
+    function fetchDataUrl(url) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+            if (!r.ok) { throw new Error('HTTP ' + r.status); }
+            return r.blob();
+        }).then(function (blob) {
+            return new Promise(function (resolve) {
+                var reader = new FileReader();
+                reader.onload = function () { resolve(reader.result); };
+                reader.readAsDataURL(blob);
+            });
+        });
+    }
+
+    function imageSize(src) {
+        return new Promise(function (resolve, reject) {
+            var img = new Image();
+            img.onload = function () { resolve({ w: img.naturalWidth || 800, h: img.naturalHeight || 600 }); };
+            img.onerror = function () { reject(new Error('A picture could not be read.')); };
+            img.src = src;
+        });
+    }
+
+    // Pictures side by side as one SVG, so they save and print as one figure.
+    function composeFigure(sources, title) {
+        return Promise.all(sources.map(function (src) {
+            return (/^data:/.test(src) ? Promise.resolve(src) : fetchDataUrl(src)).then(function (data) {
+                return imageSize(data).then(function (size) { return { data: data, size: size }; });
+            });
+        })).then(function (parts) {
+            var height = Math.max.apply(null, parts.map(function (p) { return p.size.h; }));
+            var top = title ? 50 : 0;
+            var x = 0;
+            var images = parts.map(function (p) {
+                var out = '<image x="' + x + '" y="' + top + '" width="' + p.size.w + '" height="' + p.size.h + '" href="' + p.data + '"/>';
+                x += p.size.w + 20;
+                return out;
+            });
+            var width = x - 20;
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + (height + top) + '" viewBox="0 0 ' +
+                width + ' ' + (height + top) + '"><rect width="100%" height="100%" fill="#fff"/>' +
+                (title ? '<text x="10" y="32" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="bold">' +
+                    escapeHtml(title) + '</text>' : '') + images.join('') + '</svg>';
+        });
+    }
+
+    function showAnalysisResult(job) {
+        var r = job.result || {};
+        var title = el('analyse-form').elements.title.value.trim();
+        var base = ['genome-browser', state.genome.assembly_id, job.kind].join('_').replace(/[^\w.-]+/g, '_');
+        var downloads = (r.files || []).filter(function (f) { return !/\.(svg|png)$/.test(f); }).map(function (f) {
+            return { label: { 'matrix.gz': 'Matrix (deepTools)', 'correlation.tab': 'Correlation table', 'bins.tab': 'Values per bin',
+                'signal-per-feature.csv': 'Table (CSV)' }[f] || f, url: analysisFile(job, f), filename: f };
+        });
+        if (job.kind === 'compare') {
+            el('analyse-result').replaceChildren(make('div', { class: 'gb-notice', text: 'Made the new track, for your lab: adding it…' }));
+            reloadTracksAndShow(r.track_id);
+            return;
+        }
+        if (job.kind === 'genes') {
+            var head = ['Name', 'Position'].concat(r.columns || []);
+            var table = make('table', { class: 'gb-analyse-table' }, [
+                make('thead', {}, [make('tr', {}, head.map(function (h) { return make('th', { text: h }); }))]),
+                make('tbody', {}, (r.preview || []).map(function (row) {
+                    return make('tr', {}, [make('td', { text: row.name }), make('td', { text: row.chrom + ':' + row.start.toLocaleString('en-US') })]
+                        .concat(row.values.map(function (v) { return make('td', { class: 'num', text: v === null ? '' : String(v) }); })));
+                }))]);
+            el('analyse-result').replaceChildren(
+                make('p', {}, [document.createTextNode((r.count || 0).toLocaleString('en-US') + ' features measured. ' +
+                    ((r.columns || []).length === 2 ? 'The 50 with the largest difference between the two tracks:' : 'The 50 highest:') + ' '),
+                    make('a', { href: downloads[0].url, download: 'signal-per-feature.csv', text: 'Download the whole table (CSV)' })]),
+                make('div', { class: 'gb-analyse-table-wrap' }, [table]));
+            return;
+        }
+        var pictures = (r.files || []).filter(function (f) { return /\.(svg|png)$/.test(f); });
+        var heading = title || (job.kind === 'profile' ? 'Profile' + ((r.regions || []).length ? ': ' + r.regions.join(', ') : '')
+            : 'Replicate check');
+        composeFigure(pictures.map(function (f) { return analysisFile(job, f); }), heading).then(function (svg) {
+            el('analyse-dialog').close();
+            openFigureDialog({
+                kind: 'analysis', svg: svg, locus: state.genome.assembly_id + ', ' + (job.kind === 'profile' ? 'profile' : 'replicate check'),
+                filename: base, selection: null, title: heading, downloads: downloads,
+                recipe: { kind: 'deeptools', jobId: job.id },
+                about: job.kind === 'profile'
+                    ? 'Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.'
+                    : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.',
+                tracks: checkedValues(el('analyse-tracks')).map(function (id) {
+                    var t = state.tracks.find(function (x) { return x.id === id; });
+                    return t ? t.name : id;
+                })
+            });
+        }).catch(function (err) {
+            formError(el('analyse-form'), ['The pictures could not be shown: ' + err.message]);
+        });
+    }
+
+    // A new track from a comparison: list it, and show it in the view.
+    function reloadTracksAndShow(trackId) {
+        getJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/tracks').then(function (tracks) {
+            state.tracks = tracks;
+            if (trackId) { state.selected.add(trackId); }
+            renderTracks();
+            var t = tracks.find(function (x) { return x.id === trackId; });
+            if (t && state.browser) {
+                state.browser.loadTrack(trackConfig(t));
+                scheduleSave();
+            }
+            var note = el('analyse-result').querySelector('.gb-notice');
+            if (note && t) { note.textContent = 'Made the track “' + t.name + '”, for your lab, and showed it. It is in the track list too.'; }
+        });
+    }
+
+    // Bars of each coverage track's mean over the selection, drawn here.
+    function drawSelectionBars(tracks) {
+        var form = el('analyse-form');
+        var sel = state.selection;
+        if (!sel) { formError(form, ['Select a region in the browser first.']); return; }
+        if (!tracks.length) { formError(form, ['Tick at least one coverage track.']); return; }
+        el('analyse-run').disabled = true;
+        postJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/region-means',
+            { tracks: tracks, chrom: sel.chrom, start: sel.start, end: sel.end }).then(function (res) {
+            var colours = {};
+            shownTracks().forEach(function (t) { colours[t.id] = t.color; });
+            var rows = res.tracks.filter(function (t) { return t.mean !== null && t.mean !== undefined; });
+            if (!rows.length) { throw new Error('none of the tracks has data there'); }
+            var where = sel.chrom + ':' + (sel.start + 1).toLocaleString('en-US') + '-' + sel.end.toLocaleString('en-US');
+            var title = form.elements.title.value.trim() || 'Mean signal over ' + (sel.name ? sel.name + ', ' : '') + where;
+            var low = Math.min(0, Math.min.apply(null, rows.map(function (t) { return t.mean; })));
+            var high = Math.max(0, Math.max.apply(null, rows.map(function (t) { return t.mean; })));
+            var span = (high - low) || 1;
+            var barW = 56, gap = 22, left = 190, top = 70, plotH = 320, labelH = 150;
+            var width = left + rows.length * (barW + gap) + 20;
+            var y = function (v) { return top + (high - v) / span * plotH; };
+            var parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="' + Math.max(width, 420) + '" height="' + (top + plotH + labelH) +
+                '" font-family="Helvetica, Arial, sans-serif"><rect width="100%" height="100%" fill="#fff"/>',
+                '<text x="10" y="30" font-size="18" font-weight="bold">' + escapeHtml(title) + '</text>',
+                '<line x1="' + left + '" y1="' + y(0) + '" x2="' + (width - 10) + '" y2="' + y(0) + '" stroke="#444"/>',
+                '<line x1="' + left + '" y1="' + top + '" x2="' + left + '" y2="' + (top + plotH) + '" stroke="#444"/>'];
+            [high, low, 0].filter(function (v, i, all) { return all.indexOf(v) === i; }).forEach(function (v) {
+                parts.push('<text x="' + (left - 8) + '" y="' + (y(v) + 4) + '" font-size="12" text-anchor="end">' +
+                    Number(v.toPrecision(3)) + '</text>');
+            });
+            rows.forEach(function (t, i) {
+                var x = left + gap / 2 + i * (barW + gap);
+                var y0 = y(Math.max(0, t.mean)), h = Math.abs(y(t.mean) - y(0));
+                parts.push('<rect x="' + x + '" y="' + y0 + '" width="' + barW + '" height="' + Math.max(1, h) + '" fill="' +
+                    escapeHtml(colours[t.id] || '#4a7cb0') + '"><title>' + escapeHtml(t.name + ': ' + t.mean) + '</title></rect>');
+                parts.push('<text transform="translate(' + (x + barW / 2 + 4) + ',' + (top + plotH + 14) + ') rotate(-40)" ' +
+                    'text-anchor="end" font-size="12">' +
+                    escapeHtml(t.name.length > 28 ? t.name.slice(0, 27) + '…' : t.name) + '</text>');
+            });
+            parts.push('</svg>');
+            el('analyse-dialog').close();
+            openFigureDialog({ kind: 'analysis', svg: parts.join(''), locus: where, filename: 'selection-means_' + where.replace(/[^\w.-]+/g, '_'),
+                selection: sel, title: title, about: 'The mean of each coverage track over the selection.',
+                recipe: { kind: 'bars', chrom: sel.chrom, start: sel.start, end: sel.end,
+                          tracks: rows.map(function (t) { return { id: t.id, color: colours[t.id] }; }) },
+                tracks: rows.map(function (t) { return t.name + ': ' + Number(t.mean.toPrecision(4)); }) });
+        }).catch(function (err) {
+            formError(form, ['Could not draw it: ' + err.message]);
+        }).then(function () { el('analyse-run').disabled = false; });
+    }
+
+    // The genome along both sides; each link a line from one region to the other (both ways round).
+    // The genome's chromosomes and lengths: the landing page loads them; a page opened straight into the
+    // browser (a link, a reload) has not, so they are fetched then.
+    function genomeChromosomes() {
+        if (state.detail && state.detail.id === state.genome.id && (state.detail.chromosomes || []).length) {
+            return Promise.resolve(state.detail.chromosomes);
+        }
+        return getJSON(API + '/genomes/' + encodeURIComponent(state.genome.id)).then(function (detail) {
+            state.detail = detail;
+            return detail.chromosomes || [];
+        });
+    }
+
+    function drawDotPlot(trackId) {
+        var form = el('analyse-form');
+        if (!trackId) { formError(form, ['Add a links (BEDPE) track to this genome first.']); return; }
+        genomeChromosomes().then(function (all) { drawDotPlotOn(trackId, all); }).catch(function (err) {
+            formError(form, ['The genome’s chromosomes could not be read: ' + err.message]);
+        });
+    }
+
+    function drawDotPlotOn(trackId, all) {
+        var form = el('analyse-form');
+        var chroms = (all || []).slice();
+        var total = chroms.reduce(function (s, c) { return s + c.length_bp; }, 0);
+        if (!total) { formError(form, ['The genome’s chromosomes are not known.']); return; }
+        var big = chroms.filter(function (c) { return c.length_bp >= total * 0.01; });
+        if (big.length) { chroms = big; total = chroms.reduce(function (s, c) { return s + c.length_bp; }, 0); }
+        var offset = {}, at = 0;
+        chroms.forEach(function (c) { offset[c.name] = at; at += c.length_bp; });
+        el('analyse-run').disabled = true;
+        fetchText(API + '/tracks/' + encodeURIComponent(trackId) + '/links.bedpe').then(function (text) {
+            var size = 760, pad = 70, scale = size / total;
+            var t = state.tracks.find(function (x) { return x.id === trackId; }) || { name: 'links' };
+            var colour = (shownTracks().find(function (x) { return x.id === trackId; }) || {}).color || '#7b3294';
+            var lines = [], n = 0, skipped = 0;
+            text.split('\n').some(function (line) {
+                if (!line || line[0] === '#' || /^(track|browser|chrom1)/i.test(line)) { return false; }
+                var f = line.split(line.indexOf('\t') >= 0 ? '\t' : /\s+/);
+                if (f.length < 6 || !(f[0] in offset) || !(f[3] in offset)) { skipped++; return false; }
+                var x1 = pad + (offset[f[0]] + Number(f[1])) * scale, x2 = pad + (offset[f[0]] + Number(f[2])) * scale;
+                var y1 = pad + (offset[f[3]] + Number(f[4])) * scale, y2 = pad + (offset[f[3]] + Number(f[5])) * scale;
+                if (![x1, x2, y1, y2].every(isFinite)) { skipped++; return false; }
+                lines.push('<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '"/>');
+                lines.push('<line x1="' + y1.toFixed(1) + '" y1="' + x1.toFixed(1) + '" x2="' + y2.toFixed(1) + '" y2="' + x2.toFixed(1) + '"/>');
+                n++;
+                return n >= 25000;
+            });
+            if (!n) { throw new Error('none of its links are on the chromosomes drawn'); }
+            var grid = [], labels = [];
+            chroms.forEach(function (c) {
+                var p = pad + offset[c.name] * scale, mid = pad + (offset[c.name] + c.length_bp / 2) * scale;
+                grid.push('<line x1="' + p + '" y1="' + pad + '" x2="' + p + '" y2="' + (pad + size) + '"/>' +
+                    '<line x1="' + pad + '" y1="' + p + '" x2="' + (pad + size) + '" y2="' + p + '"/>');
+                labels.push('<text x="' + mid + '" y="' + (pad - 10) + '" text-anchor="middle">' + escapeHtml(c.name) + '</text>' +
+                    '<text x="' + (pad - 10) + '" y="' + (mid + 4) + '" text-anchor="end">' + escapeHtml(c.name) + '</text>');
+            });
+            var title = form.elements.title.value.trim() || 'Dot plot: ' + t.name;
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (size + pad + 20) + '" height="' + (size + pad + 20) +
+                '" font-family="Helvetica, Arial, sans-serif" font-size="13"><rect width="100%" height="100%" fill="#fff"/>' +
+                '<text x="10" y="22" font-size="17" font-weight="bold">' + escapeHtml(title) + '</text>' +
+                '<rect x="' + pad + '" y="' + pad + '" width="' + size + '" height="' + size + '" fill="none" stroke="#444"/>' +
+                '<g stroke="#ccc" stroke-width="1">' + grid.join('') + '</g>' + labels.join('') +
+                '<g stroke="' + escapeHtml(colour) + '" stroke-width="2" stroke-linecap="round">' + lines.join('') + '</g></svg>';
+            el('analyse-dialog').close();
+            openFigureDialog({ kind: 'analysis', svg: svg, locus: 'whole genome', filename: 'dotplot_' + t.name.replace(/[^\w.-]+/g, '_'),
+                selection: null, title: title,
+                recipe: { kind: 'dotplot', trackId: trackId, colour: colour, chroms: chroms },
+                about: n.toLocaleString('en-US') + ' links drawn, each both ways round' +
+                    (n >= 25000 ? ' (the first 25,000)' : '') + (skipped ? '; ' + skipped + ' not on the chromosomes drawn' : '') + '.',
+                tracks: [t.name] });
+        }).catch(function (err) {
+            formError(form, ['Could not draw it: ' + err.message]);
+        }).then(function () { el('analyse-run').disabled = false; });
+    }
+
+    el('analyse-kind').addEventListener('change', showAnalyseFields);
+    el('analyse-feature-track').addEventListener('change', loadFeatureTypes);
+
+    // ------------------------------------------------------------------
+    // The code to make a figure again: a page under the figure's page in the notebook
+    // ------------------------------------------------------------------
+
+    function suiteUrl(path) { return location.origin + path; }
+
+    function trackFile(id) {
+        var t = (state.tracks || []).find(function (x) { return x.id === id; }) || { name: id, export_name: id };
+        return { id: id, name: t.name, file: t.export_name || t.name, type: t.type,
+                 url: suiteUrl(API + '/tracks/' + encodeURIComponent(id) + '/export') };
+    }
+
+    function hexColour(colour, fallback) {
+        var c = String(colour || '').trim();
+        if (/^#[0-9a-f]{6}$/i.test(c)) { return c; }
+        if (/^#[0-9a-f]{3}$/i.test(c)) { return '#' + c.slice(1).split('').map(function (x) { return x + x; }).join(''); }
+        var m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(c);
+        if (m) { return '#' + [m[1], m[2], m[3]].map(function (v) { return ('0' + Math.min(255, +v).toString(16)).slice(-2); }).join(''); }
+        return fallback || '#4a7cb0';
+    }
+
+    function pyString(text) { return JSON.stringify(String(text)); }
+
+    function codeBlock(text) { return '<pre><code>' + escapeHtml(text) + '</code></pre>'; }
+
+    function inputsHtml(files) {
+        if (!files.length) { return ''; }
+        return '<h3>1. Get the inputs</h3><p>Download each into one folder, keeping the file name (signed in to the ' +
+            'suite; or Export, in the track’s settings in the Genome Browser):</p><ul>' + files.map(function (f) {
+                return '<li><a href="' + escapeHtml(f.url) + '">' + escapeHtml(f.file) + '</a>' +
+                    (f.name && f.name !== f.file ? ': ' + escapeHtml(f.name) : '') + '</li>';
+            }).join('') + '</ul>';
+    }
+
+    function textFile(name, text, type) {
+        return new File([text], name, { type: type || 'text/plain' });
+    }
+
+    // Each kind of figure's recipe: {html, files: [File]}.
+    function figureRecipe(fig) {
+        var made = 'Made ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC' +
+            (state.me && state.me.username ? ' by ' + state.me.username : '') + ', from ' +
+            state.genome.name + ' (' + state.genome.assembly_id + ') in the Trellis Tools Genome Browser.';
+        var r = fig.recipe || {};
+        if (fig.kind === 'circos') { return Promise.resolve(circosRecipe(fig, made)); }
+        if (r.kind === 'deeptools') { return deeptoolsRecipe(fig, r, made); }
+        if (r.kind === 'bars') { return Promise.resolve(barsRecipe(fig, r, made)); }
+        if (r.kind === 'dotplot') { return Promise.resolve(dotplotRecipe(fig, r, made)); }
+        if (r.kind === 'view') { return Promise.resolve(viewRecipe(fig, r, made)); }
+        return Promise.resolve(null);
+    }
+
+    function circosRecipe(fig, made) {
+        var bytes = Uint8Array.from(atob(fig.bundle), function (c) { return c.charCodeAt(0); });
+        var zip = new File([bytes], fig.filename + '-circos.zip', { type: 'application/zip' });
+        var html = '<p>' + escapeHtml(made) + ' Drawn by Circos 0.69-9 (circos.ca). Everything it needs, the configuration ' +
+            'and the data (each track already binned), is in the attached zip: no download from the suite.</p>' +
+            '<h3>1. Install Circos 0.69</h3>' +
+            codeBlock('# Debian or Ubuntu\nsudo apt install circos liblist-moreutils-perl\n\n# or with conda\nconda install -c bioconda circos=0.69.9') +
+            '<h3>2. Unpack and run</h3>' +
+            codeBlock('unzip ' + zip.name + '\ncd circos\n# A Debian install keeps Circos’s own files in /etc/circos; the configuration looks in etc/\n' +
+                '[ -d etc ] || ln -s /etc/circos etc\ncircos -conf circos.conf      # writes circos.png and circos.svg') +
+            '<p>The legend in the notebook’s picture is added by the Genome Browser (the rings are listed in README.txt). ' +
+            'To change the plot, edit <code>circos.conf</code> (colours, ring heights, a heatmap instead of a histogram) or the ' +
+            'data files, and run Circos again.</p>' +
+            '<p>Cite Circos: Krzywinski M et al. (2009) Circos: an information aesthetic for comparative genomics. Genome Research 19: 1639–1645.</p>';
+        return { html: html, files: [zip] };
+    }
+
+    function deeptoolsRecipe(fig, r, made) {
+        return getJSON(API + '/analyses/' + encodeURIComponent(r.jobId) + '/recipe').then(function (rec) {
+            return fetch(API + '/analyses/' + encodeURIComponent(r.jobId) + '/files/recipe.zip', { credentials: 'same-origin' })
+                .then(function (res) {
+                    if (!res.ok) { throw new Error('the recipe could not be fetched (HTTP ' + res.status + ')'); }
+                    return res.blob();
+                }).then(function (blob) {
+                    var zip = new File([blob], fig.filename + '-recipe.zip', { type: 'application/zip' });
+                    var byFile = {};
+                    (state.tracks || []).forEach(function (t) { byFile[t.export_name] = t; });
+                    var files = (rec.inputs || []).map(function (name) {
+                        var t = byFile[name];
+                        return t ? trackFile(t.id) : { file: name, name: '', url: '' };
+                    });
+                    var html = '<p>' + escapeHtml(made) + ' Drawn by deepTools ' + escapeHtml(rec.deeptools || '') + '.</p>' +
+                        inputsHtml(files) +
+                        (rec.regions && rec.regions.length ? '<p>The features used are in the attached zip, as BED files (' +
+                            escapeHtml(rec.regions.join(', ')) + ').</p>' : '') +
+                        '<h3>2. Install deepTools</h3>' +
+                        codeBlock('pip install deeptools==' + (rec.deeptools || '3.5.1') + '\n# or: conda install -c bioconda deeptools=' + (rec.deeptools || '3.5.1')) +
+                        '<h3>3. Run</h3><p>Unzip the attached recipe into the folder with the inputs and run <code>sh run.sh</code>. ' +
+                        'The commands, as they were run:</p>' + codeBlock((rec.commands || []).join('\n\n')) +
+                        '<p>Cite deepTools: Ramírez F et al. (2016) deepTools2: a next generation web server for deep-sequencing ' +
+                        'data analysis. Nucleic Acids Research 44: W160–W165.</p>';
+                    return { html: html, files: [zip] };
+                });
+        });
+    }
+
+    function barsRecipe(fig, r, made) {
+        var files = r.tracks.map(function (t) { return Object.assign(trackFile(t.id), { colour: hexColour(t.color) }); });
+        var script = [
+            '"""' + fig.title + '.',
+            made,
+            'Needs: pip install pyBigWig matplotlib. Run in the folder with the BigWig files."""',
+            'import matplotlib',
+            'matplotlib.use("Agg")',
+            'import matplotlib.pyplot as plt',
+            'import pyBigWig',
+            '',
+            'TITLE = ' + pyString(fig.title),
+            'CHROM, START, END = ' + pyString(r.chrom) + ', ' + r.start + ', ' + r.end + '   # 0-based, end not included',
+            'TRACKS = [  # (file, label, colour)',
+            files.map(function (f) { return '    (' + pyString(f.file) + ', ' + pyString(f.name) + ', ' + pyString(f.colour) + '),'; }).join('\n'),
+            ']',
+            '',
+            'means = []',
+            'for path, label, colour in TRACKS:',
+            '    bw = pyBigWig.open(path)',
+            '    means.append(bw.stats(CHROM, START, min(END, bw.chroms(CHROM)), type="mean")[0])',
+            '    bw.close()',
+            '',
+            'shown = [(t, m) for t, m in zip(TRACKS, means) if m is not None]',
+            'fig, ax = plt.subplots(figsize=(max(4, 0.9 * len(shown) + 1.5), 5))',
+            'ax.bar(range(len(shown)), [m for _, m in shown], color=[t[2] for t, _ in shown])',
+            'ax.set_xticks(range(len(shown)))',
+            'ax.set_xticklabels([t[1] for t, _ in shown], rotation=40, ha="right")',
+            'ax.axhline(0, color="#444", linewidth=0.8)',
+            'ax.set_ylabel("mean signal")',
+            'ax.set_title(TITLE)',
+            'fig.tight_layout()',
+            'fig.savefig("selection-means.svg")',
+            'fig.savefig("selection-means.png", dpi=200)',
+            'for (path, label, colour), m in zip(TRACKS, means):',
+            '    print(f"{label}\\t{m}")',
+            ''].join('\n');
+        var name = fig.filename + '.py';
+        var html = '<p>' + escapeHtml(made) + '</p>' + inputsHtml(files) +
+            '<h3>2. Install</h3>' + codeBlock('pip install pyBigWig matplotlib') +
+            '<h3>3. Run</h3><p>With the attached <code>' + escapeHtml(name) + '</code> in the same folder:</p>' +
+            codeBlock('python3 ' + name + '      # writes selection-means.svg and .png, and prints each mean') +
+            '<p>The script:</p>' + codeBlock(script);
+        return { html: html, files: [textFile(name, script, 'text/x-python')] };
+    }
+
+    function dotplotRecipe(fig, r, made) {
+        var file = trackFile(r.trackId);
+        var script = [
+            '"""' + fig.title + '.',
+            made,
+            'Needs: pip install matplotlib. Run in the folder with the links (BEDPE) file."""',
+            'import matplotlib',
+            'matplotlib.use("Agg")',
+            'import matplotlib.pyplot as plt',
+            'from matplotlib.collections import LineCollection',
+            '',
+            'TITLE = ' + pyString(fig.title),
+            'LINKS = ' + pyString(file.file),
+            'COLOUR = ' + pyString(hexColour(r.colour, '#7b3294')),
+            'LIMIT = 25000   # links drawn at most, the first in the file',
+            'CHROMS = [  # (name, length): the chromosomes drawn, in order',
+            r.chroms.map(function (c) { return '    (' + pyString(c.name) + ', ' + c.length_bp + '),'; }).join('\n'),
+            ']',
+            '',
+            'offset, at = {}, 0',
+            'for name, length in CHROMS:',
+            '    offset[name] = at',
+            '    at += length',
+            'segments = []',
+            'for line in open(LINKS):',
+            '    if not line.strip() or line.startswith(("#", "track", "browser")) or line.lower().startswith("chrom1"):',
+            '        continue',
+            '    f = line.rstrip("\\n").split("\\t") if "\\t" in line else line.split()',
+            '    if len(f) < 6 or f[0] not in offset or f[3] not in offset:',
+            '        continue',
+            '    x1, x2 = offset[f[0]] + int(f[1]), offset[f[0]] + int(f[2])',
+            '    y1, y2 = offset[f[3]] + int(f[4]), offset[f[3]] + int(f[5])',
+            '    segments += [[(x1, y1), (x2, y2)], [(y1, x1), (y2, x2)]]   # both ways round',
+            '    if len(segments) >= 2 * LIMIT:',
+            '        break',
+            '',
+            'fig, ax = plt.subplots(figsize=(8, 8))',
+            'ax.add_collection(LineCollection(segments, colors=COLOUR, linewidths=1.5))',
+            'for name, length in CHROMS:',
+            '    ax.axvline(offset[name], color="#ccc", linewidth=0.8)',
+            '    ax.axhline(offset[name], color="#ccc", linewidth=0.8)',
+            'ticks = [offset[n] + l / 2 for n, l in CHROMS]',
+            'ax.set_xticks(ticks)',
+            'ax.set_xticklabels([n for n, _ in CHROMS])',
+            'ax.set_yticks(ticks)',
+            'ax.set_yticklabels([n for n, _ in CHROMS])',
+            'ax.set_xlim(0, at)',
+            'ax.set_ylim(at, 0)',
+            'ax.set_aspect("equal")',
+            'ax.set_title(TITLE)',
+            'fig.tight_layout()',
+            'fig.savefig("dotplot.svg")',
+            'fig.savefig("dotplot.png", dpi=200)',
+            'print(len(segments) // 2, "links drawn")',
+            ''].join('\n');
+        var name = fig.filename + '.py';
+        var html = '<p>' + escapeHtml(made) + '</p>' + inputsHtml([file]) +
+            '<h3>2. Install</h3>' + codeBlock('pip install matplotlib') +
+            '<h3>3. Run</h3><p>With the attached <code>' + escapeHtml(name) + '</code> in the same folder:</p>' +
+            codeBlock('python3 ' + name + '      # writes dotplot.svg and dotplot.png') +
+            '<p>The script:</p>' + codeBlock(script);
+        return { html: html, files: [textFile(name, script, 'text/x-python')] };
+    }
+
+    // A browser view: the same igv.js, the same tracks and place, as a page to open locally.
+    function viewRecipe(fig, r, made) {
+        var genomeFile = state.genome.assembly_id.replace(/[^\w.-]+/g, '_') + '.fa';
+        var files = [{ file: genomeFile, name: 'the reference sequence (FASTA)',
+                       url: suiteUrl(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/reference.fa') }];
+        var tracks = [], index = [];
+        r.tracks.forEach(function (t) {
+            var f = Object.assign(trackFile(t.id), {});
+            files.push(f);
+            var c = { name: t.name, color: t.color || undefined, height: t.height || undefined };
+            if (t.type === 'bigwig') {
+                Object.assign(c, { type: 'wig', format: 'bigwig', url: f.file });
+                if (t.min !== undefined && t.max !== undefined && t.autoscale === false) { Object.assign(c, { autoscale: false, min: t.min, max: t.max }); }
+            } else if (t.type === 'bedpe') {
+                Object.assign(c, { type: 'interact', format: 'bedpe', url: f.file, arcType: 'nested' });
+            } else {
+                var ext = t.type === 'bed' ? 'bed' : 'gff3';
+                Object.assign(c, { type: 'annotation', format: ext, url: f.file + '.gz', indexURL: f.file + '.gz.tbi',
+                                   displayMode: t.displayMode || 'EXPANDED' });
+                index.push(t.type === 'bed'
+                    ? 'sort -k1,1 -k2,2n ' + JSON.stringify(f.file) + ' | bgzip > ' + JSON.stringify(f.file + '.gz') + ' && tabix -p bed ' + JSON.stringify(f.file + '.gz')
+                    : '(grep "^#" ' + JSON.stringify(f.file) + '; grep -v "^#" ' + JSON.stringify(f.file) + ' | sort -k1,1 -k4,4n) | bgzip > ' +
+                      JSON.stringify(f.file + '.gz') + ' && tabix -p gff ' + JSON.stringify(f.file + '.gz'));
+            }
+            tracks.push(c);
+        });
+        var session = { reference: { id: state.genome.assembly_id, name: state.genome.name, fastaURL: genomeFile, indexURL: genomeFile + '.fai' },
+                        locus: fig.locus, tracks: tracks };
+        if (fig.selection) {
+            session.roi = [{ name: 'Selection', color: 'rgba(255,190,0,0.25)', features: [{ chr: fig.selection.chrom, start: fig.selection.start, end: fig.selection.end }] }];
+        }
+        var sessionText = JSON.stringify(session, null, 2);
+        var page = ['<!doctype html>', '<meta charset="utf-8">', '<title>' + escapeHtml(fig.title || 'Genome Browser view') + '</title>',
+            '<script src="https://cdn.jsdelivr.net/npm/igv@3.8.10/dist/igv.min.js"></scr' + 'ipt>',
+            '<div id="igv"></div>', '<p><button id="svg">Save as SVG</button></p>',
+            '<script>',
+            'fetch("session.json").then(function (r) { return r.json(); }).then(function (s) {',
+            '  return igv.createBrowser(document.getElementById("igv"), s);',
+            '}).then(function (browser) {',
+            '  document.getElementById("svg").onclick = function () {',
+            '    var a = document.createElement("a");',
+            '    a.href = URL.createObjectURL(new Blob([browser.toSVG()], { type: "image/svg+xml" }));',
+            '    a.download = "figure.svg"; a.click();',
+            '  };',
+            '});',
+            '</scr' + 'ipt>', ''].join('\n');
+        var html = '<p>' + escapeHtml(made) + ' Drawn by igv.js 3.8.10 (igv.org), as the Genome Browser draws it: ' +
+            escapeHtml(fig.locus) + '.</p>' + inputsHtml(files) +
+            '<h3>2. Index them</h3><p>With samtools and htslib (bgzip, tabix) installed:</p>' +
+            codeBlock(['samtools faidx ' + genomeFile].concat(index).join('\n')) +
+            '<h3>3. Open the view</h3><p>Put the attached <code>session.json</code> and <code>figure.html</code> in the same folder, then:</p>' +
+            codeBlock('python3 -m http.server 8000\n# then open http://localhost:8000/figure.html, and press "Save as SVG"') +
+            '<p>The view (<code>session.json</code>):</p>' + codeBlock(sessionText) +
+            '<p>Cite igv.js: Robinson JT et al. (2023) igv.js: an embeddable JavaScript implementation of the Integrative ' +
+            'Genomics Viewer (IGV). Bioinformatics 39: btac830.</p>';
+        return { html: html, files: [textFile('session.json', sessionText, 'application/json'), textFile('figure.html', page, 'text/html')] };
+    }
+
+    // The recipe as a page under the figure's own page: its files attached, then its text.
+    function saveRecipePage(NB, figurePage, title, fig) {
+        return figureRecipe(fig).then(function (recipe) {
+            if (!recipe) { return null; }
+            var codePage;
+            return postJSON(NB + '/notes', { parent_id: figurePage.id, title: 'How to make: ' + title, type: 'page' }).then(function (res) {
+                codePage = res.note;
+                var form = new FormData();
+                recipe.files.forEach(function (f) { form.append('file', f); });
+                return fetch(NB + '/notes/' + encodeURIComponent(codePage.id) + '/attachments', {
+                    method: 'POST', credentials: 'same-origin', body: form
+                }).then(function (r) {
+                    return r.json().then(function (body) {
+                        if (!r.ok) { throw new Error(body.error || ('the notebook said ' + r.status)); }
+                        return body.attachments;
+                    });
+                });
+            }).then(function (added) {
+                var links = added.map(function (a, i) {
+                    return '<a data-attachment="' + escapeHtml(a.id) + '">' + escapeHtml(a.name || recipe.files[i].name) + '</a>';
+                }).join(', ');
+                var html = '<h2>How to make this figure again</h2>' + recipe.html +
+                    '<p><b>Attached:</b> ' + links + '.</p>';
+                return fetch(NB + '/notes/' + encodeURIComponent(codePage.id), {
+                    method: 'PUT', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ title: codePage.title, content: [{ type: 'text', html: html }], base_version: codePage.version })
+                }).then(function (r) {
+                    if (!r.ok) { return r.json().then(function (b) { throw new Error(b.error || ('the notebook said ' + r.status)); }); }
+                    return codePage;
+                });
+            });
+        });
+    }
+
     function downloadFigureSvg() {
         var fig = state.figure;
         if (!fig) { return; }
@@ -1775,6 +2549,11 @@
             var where = state.genome.name + ' (' + state.genome.assembly_id + '), ' + fig.locus;
             var lines = ['<p><b>' + (fig.kind === 'circos' ? 'A Circos plot from the Genome Browser:' : 'From the Genome Browser:') +
                 '</b> ' + escapeHtml(where) + '.</p>'];
+            if (fig.kind === 'analysis' && fig.about) {
+                lines.push('<p>' + escapeHtml(fig.about) + (/deepTools/.test(fig.about)
+                    ? ' Ram\u00edrez F et al. (2016) deepTools2: a next generation web server for deep-sequencing data analysis. ' +
+                      'Nucleic Acids Research 44: W160\u2013W165.' : '') + '</p>');
+            }
             if (fig.kind === 'circos') {
                 lines.push('<p>Rings, outermost first, in bins of ' + fig.binSize.toLocaleString('en-US') +
                     ' bp. Drawn with Circos: Krzywinski M et al. (2009) Circos: an information aesthetic for comparative genomics. ' +
@@ -1804,9 +2583,17 @@
                 });
             });
         }).then(function () {
+            // The code to make it again, as a page under it; the figure stands even if that fails.
+            return saveRecipePage(NB, page, title, fig).then(function (codePage) {
+                return codePage ? 'with the code to make it again on a page under it' : '';
+            }, function (err) {
+                return 'but the page with its code could not be made (' + err.message + ')';
+            });
+        }).then(function (codeNote) {
             var link = make('a', { href: NOTEBOOK + '/#note=' + encodeURIComponent(page.id), target: '_blank', rel: 'noopener', text: 'Open the page →' });
             var done = el('figure-done');
-            done.replaceChildren(document.createTextNode('Saved to your Lab Notebook, under today: “' + title + '”. '), link);
+            done.replaceChildren(document.createTextNode('Saved to your Lab Notebook, under today: “' + title + '”' +
+                (codeNote ? ', ' + codeNote : '') + '. '), link);
             done.hidden = false;
             el('figure-save').textContent = 'Saved';
         }).catch(function (err) {
@@ -2127,6 +2914,9 @@
 
     el('figure-open').addEventListener('click', function () { openFigureDialog(); });
     el('circos-open').addEventListener('click', openCircosDialog);
+    el('analyse-open').addEventListener('click', openAnalyseDialog);
+    el('analyse-form').addEventListener('submit', runAnalysis);
+    el('analyse-close').addEventListener('click', function () { el('analyse-dialog').close(); });
     el('circos-form').addEventListener('submit', drawCircos);
     el('circos-close').addEventListener('click', function () { el('circos-dialog').close(); });
     el('figure-circos-files').addEventListener('click', downloadCircosFiles);

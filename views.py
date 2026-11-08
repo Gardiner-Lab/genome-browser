@@ -641,6 +641,8 @@ def _browser_html(static_prefix: str) -> str:
           <span class="gb-bulk-icon" aria-hidden="true"></span>Bulk track settings</button>
         <button type="button" class="tt-btn" id="figure-open"
                 title="Save this view as a figure: to your Lab Notebook as a page under today, or as an SVG file">Save to notebook</button>
+        <button type="button" class="tt-btn" id="analyse-open"
+                title="Profiles and heatmaps around features, differences between tracks, replicate checks, tables, bar charts and dot plots">Analyse</button>
         <button type="button" class="tt-btn" id="circos-open"
                 title="Draw the genome round a circle with the tracks shown as rings: a Circos plot, as SVG, PNG or to your Lab Notebook">Circos plot</button>
         <span class="gb-tool-sep" aria-hidden="true"></span>
@@ -794,6 +796,127 @@ def _browser_html(static_prefix: str) -> str:
     </form>
   </dialog>
 
+  <dialog id="analyse-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="analyse-dialog-title">
+    <form method="dialog" id="analyse-form" novalidate>
+      <h2 id="analyse-dialog-title">Analyse</h2>
+      <label class="gb-field">What to draw
+        <select id="analyse-kind" name="kind"></select>
+      </label>
+      <p class="gb-hint" id="analyse-about"></p>
+      <label class="gb-field">Title <span class="gb-hint">(optional)</span>
+        <input name="title" maxlength="100">
+      </label>
+      <div data-for="tracks">
+        <h3 class="gb-share-h">Coverage tracks <span class="gb-hint">(those shown are ticked)</span></h3>
+        <div class="gb-analyse-checks" id="analyse-tracks"></div>
+      </div>
+      <div data-for="features">
+        <h3 class="gb-share-h">Features</h3>
+        <label class="gb-field">From the track
+          <select id="analyse-feature-track"></select>
+        </label>
+        <p class="gb-hint" id="analyse-type-hint"></p>
+        <div class="gb-analyse-checks" id="analyse-types"></div>
+        <label class="gb-field">Only these <span class="gb-hint">(optional: names as in the track, separated by commas;
+          for example the genes of a list)</span>
+          <textarea name="names" rows="2" maxlength="100000" spellcheck="false" placeholder="AT1G01010, AT2G18790"></textarea>
+        </label>
+      </div>
+      <div data-for="profile" class="gb-circos-row">
+        <label class="gb-field">Around
+          <select name="mode">
+            <option value="scale" selected>The whole feature, scaled to one length</option>
+            <option value="start">Its start (transcription start, for genes)</option>
+            <option value="end">Its end</option>
+          </select>
+        </label>
+        <label class="gb-field">With, either side
+          <select name="flank">
+            <option value="1000">1 kb</option><option value="2000" selected>2 kb</option>
+            <option value="5000">5 kb</option><option value="10000">10 kb</option>
+          </select>
+        </label>
+        <label class="gb-field">Scaled length
+          <select name="body">
+            <option value="1000">1 kb</option><option value="3000" selected>3 kb</option><option value="5000">5 kb</option>
+          </select>
+        </label>
+        <label class="gb-field">Step
+          <select name="bin">
+            <option value="50">50 bp</option><option value="100" selected>100 bp</option><option value="200">200 bp (faster)</option>
+          </select>
+        </label>
+      </div>
+      <div data-for="profile" class="gb-circos-row">
+        <label class="gb-check"><input type="checkbox" name="heatmap" checked> Heatmap too: every feature a row, sorted by signal</label>
+        <label class="gb-field">Group the rows
+          <select name="kmeans">
+            <option value="0" selected>No: sorted only</option><option value="2">Into 2 clusters</option>
+            <option value="3">Into 3 clusters</option><option value="4">Into 4 clusters</option>
+          </select>
+        </label>
+        <label class="gb-field">Colours
+          <select name="colormap">
+            <option value="viridis" selected>Viridis</option><option value="magma">Magma</option>
+            <option value="Reds">Reds</option><option value="Blues">Blues</option><option value="RdBu_r">Blue to red</option>
+          </select>
+        </label>
+      </div>
+      <div data-for="compare">
+        <div class="gb-circos-row">
+          <label class="gb-field">Track A <select id="analyse-a"></select></label>
+          <label class="gb-field">Track B <select id="analyse-b"></select></label>
+        </div>
+        <div class="gb-circos-row">
+          <label class="gb-field">Make
+            <select name="operation">
+              <option value="subtract" selected>A minus B</option>
+              <option value="log2">log2(A / B)</option>
+              <option value="ratio">A / B</option>
+              <option value="mean">The mean of A and B</option>
+            </select>
+          </label>
+          <label class="gb-field">Step
+            <select name="compare_bin">
+              <option value="50">50 bp</option><option value="100" selected>100 bp</option><option value="1000">1 kb</option>
+            </select>
+          </label>
+          <label class="gb-field">Pseudocount <span class="gb-hint">(ratios: added to both, so 0 divides)</span>
+            <input name="pseudocount" type="number" min="0.0001" step="any" value="1">
+          </label>
+        </div>
+        <label class="gb-field">Name of the new track <span class="gb-hint">(optional)</span>
+          <input name="track_name" maxlength="200" placeholder="drm1/2 minus WT, CHH">
+        </label>
+      </div>
+      <div data-for="correlation" class="gb-circos-row">
+        <label class="gb-field">Correlation
+          <select name="method">
+            <option value="pearson" selected>Pearson</option><option value="spearman">Spearman (ranks)</option>
+          </select>
+        </label>
+        <label class="gb-field">In bins of
+          <select name="corr_bin">
+            <option value="5000">5 kb</option><option value="10000" selected>10 kb</option>
+            <option value="50000">50 kb</option><option value="100000">100 kb</option>
+          </select>
+        </label>
+      </div>
+      <p data-for="selection" class="gb-hint">Selection: <b id="analyse-selection-text"></b></p>
+      <label data-for="links" class="gb-field">Links track
+        <select id="analyse-links-track"></select>
+      </label>
+      <div class="gb-notice gb-analyse-status" id="analyse-status" aria-live="polite"></div>
+      <div id="analyse-result"></div>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <span class="gb-spacer"></span>
+        <button type="button" class="tt-btn" id="analyse-close">Close</button>
+        <button type="submit" class="tt-btn primary" id="analyse-run">Draw</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="circos-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="circos-dialog-title">
     <form method="dialog" id="circos-form" novalidate>
       <h2 id="circos-dialog-title">Circos plot</h2>
@@ -863,6 +986,7 @@ def _browser_html(static_prefix: str) -> str:
       <div class="gb-error" role="alert" hidden></div>
       <div class="gb-dialog-actions">
         <button type="button" class="tt-btn" id="figure-svg">Download SVG</button>
+        <span id="figure-downloads" class="gb-figure-downloads"></span>
         <button type="button" class="tt-btn" id="figure-circos-files" hidden
                 title="Circos's own configuration and data files, to change the plot and run Circos again">Download Circos files</button>
         <span class="gb-spacer"></span>

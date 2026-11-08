@@ -322,12 +322,15 @@ def register_genomes(app: Flask) -> None:
             if genome is None or not access.can_view_genome(member, genome, conn):
                 return jsonify({'error': 'Reference genome not found'}), 404
             rows = conn.execute(
-                'SELECT id, name, type, owner_lab, visibility, track_status '
+                'SELECT id, name, type, owner_lab, visibility, track_status, file_path '
                 'FROM tracks WHERE genome_id = ? '
                 'ORDER BY name COLLATE NOCASE, id', (genome_id,)).fetchall()
+            from tracks import _export_filename
             tracks = [
                 {'id': row['id'], 'name': row['name'], 'type': row['type'],
-                 'owner_lab': row['owner_lab'], 'visibility': row['visibility']}
+                 'owner_lab': row['owner_lab'], 'visibility': row['visibility'],
+                 # The name it downloads as (Export), which the code to regenerate a figure uses.
+                 'export_name': _export_filename(row['name'], row['type'], row['file_path'] or '')}
                 for row in rows
                 if access.can_view_track(member, row, conn)
             ]

@@ -330,3 +330,14 @@ kbd { font-family: var(--tt-mono); font-size: .8em; padding: .05rem .35rem; bord
 .gb-circos-region { width: min(18rem, 100%); margin-left: .35rem; }
 .gb-circos-row { display: flex; flex-wrap: wrap; gap: 0 1rem; }
 .gb-circos-row .gb-field { flex: 1 1 12rem; }
+
+/* Analyse dialog */
+.gb-analyse-checks { display: flex; flex-wrap: wrap; gap: .2rem 1rem; max-height: 9rem; overflow-y: auto; margin-bottom: .6rem; }
+.gb-analyse-checks label { display: flex; gap: .35rem; align-items: center; font-size: .9rem; }
+.gb-analyse-status:empty { display: none; }
+.gb-analyse-table-wrap { max-height: 18rem; overflow: auto; border: 1px solid var(--tt-line, #ddd); border-radius: 6px; }
+.gb-analyse-table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+.gb-analyse-table th, .gb-analyse-table td { padding: .25rem .5rem; border-bottom: 1px solid var(--tt-line, #eee); text-align: left; white-space: nowrap; }
+.gb-analyse-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.gb-figure-downloads { display: inline-flex; flex-wrap: wrap; gap: .1rem .8rem; align-items: center; font-size: .85rem; }
+.gb-figure-downloads:not(:empty)::before { content: 'Data:'; color: var(--tt-muted, #666); }

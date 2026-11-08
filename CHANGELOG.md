@@ -9,6 +9,34 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-08
+
+### Added
+- **Analyse.** A panel beside Circos plot for what the tracks say across the whole genome, each result opening
+  like a figure (Lab Notebook, SVG, and its data):
+  - **profiles around features**, with a **heatmap** of every feature (sorted or clustered): the coverage
+    tracks chosen across genes, transposons or any feature type of a gene annotation (or a BED track's regions),
+    scaled or lined up on starts or ends, optionally only a list of genes;
+  - **difference tracks**: A minus B, log2(A / B), A / B or their mean, kept as a new coverage track of the lab;
+  - **replicate checks**: a correlation heatmap and a PCA of the tracks along the genome;
+  - **signal per feature**: each track's mean over every gene (or other feature), as a CSV table, with the
+    features that differ most between two tracks shown;
+  - **bar charts** of the tracks over the selection, and **synteny dot plots** of a links track.
+  The first four are drawn by deepTools on the server, as jobs the genome worker runs between conversions (up
+  to three waiting per person; results kept seven days); the page shows how they are getting on.
+
+- **The code to make a figure again, in the notebook.** Saving any figure to the Lab Notebook adds a page under it,
+  How to make it again: the inputs (links that download each track under the name the code uses), the software
+  and versions, and the code with its files attached. A browser view comes with an igv.js page and its session
+  (and the commands to index the reference and annotation); a Circos plot with Circos's configuration and data;
+  a profile, heatmap or replicate check with the deepTools commands as run (`run.sh`) and the regions used; a bar
+  chart or dot plot with a Python script. The tests run a table's recipe and get the same table back.
+- The genome's track list gives each track's download name (`export_name`).
+
+### Fixed
+- A page opened straight into the browser (a link, a reload) now reads the genome's chromosomes when a feature
+  needs them.
+
 ## [0.7.0] - 2026-11-08
 
 ### Added

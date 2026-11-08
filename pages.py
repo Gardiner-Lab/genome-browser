@@ -62,6 +62,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <a href="#send">Sending sequence on</a>
       <a href="#figure">Saving a figure</a>
       <a href="#circos">Circos plots</a>
+      <a href="#analyse">Analyse: profiles, heatmaps, comparisons</a>
       <a href="#genome">Adding a genome</a>
       <a href="#track">Adding tracks</a>
       <a href="#names">Chromosome names</a>
@@ -193,6 +194,18 @@ def help_html(static_prefix: str, prefix: str) -> str:
             picture, a line saying which genome, position and tracks it shows, your note, and the figure as
             an <b>SVG</b> file. <b>Open the page →</b> takes you there.</li>
       </ol>
+      <p><b>Every figure saved to the notebook gets a page under it: How to make it again.</b> It lists the inputs, each a
+         link that downloads the track under the name the code uses, the software to install, and the code, with its files
+         attached, so someone outside the suite can make the same figure:</p>
+      <ul>
+        <li><b>A view of the browser</b>: an igv.js page (<code>figure.html</code>) and the view (<code>session.json</code>:
+            the place, the tracks, their colours, heights and scales, the selection), the commands to index the
+            reference and annotation files, and how to open it with a local web server and save it as SVG.</li>
+        <li><b>A Circos plot</b>: Circos's own configuration and data, zipped, and how to install and run Circos.</li>
+        <li><b>A profile, heatmap or replicate check</b>: the deepTools commands exactly as they were run, as
+            <code>run.sh</code>, with the regions used as BED files; the inputs are named as they download.</li>
+        <li><b>A bar chart or dot plot</b>: a Python script that draws it again from the downloaded tracks.</li>
+      </ul>
       <p><b>Download SVG</b> saves the figure straight to your computer instead. SVG is a vector format:
          it stays sharp at any size and its text and lines can be edited in Inkscape or Illustrator, which
          is what a journal figure needs. In the notebook, the SVG is attached for download, and a picture
@@ -261,6 +274,56 @@ def help_html(static_prefix: str, prefix: str) -> str:
          <code>README.txt</code>. Change them (a ring's colour or height, a scale, a heatmap instead of a histogram)
          and run <code>circos -conf circos.conf</code> on a computer with Circos installed. If a Circos plot goes
          into a paper, cite Circos (see About).</p>
+    </section>
+
+    <section id="analyse">
+      <h2>Analyse: profiles, heatmaps, comparisons</h2>
+      <p><b>Analyse</b>, beside <b>Circos plot</b>, draws what the tracks say across the whole genome, not just the
+         stretch on screen. Choose what to draw; the coverage tracks you are showing are ticked to start with. Each result
+         opens like a figure: save it to your Lab Notebook, download it as SVG, and download its data.</p>
+      <div class="help-cards">
+        <div class="help-card">
+          <h3>Profile around features, and heatmap</h3>
+          <p>The average signal of each coverage track across a set of features: every gene (or transposon, or other
+             type from a gene annotation, or the regions of a BED track), scaled from start to end, with 1 to 10 kb either
+             side, or lined up on their starts or ends. Up to four feature types, each its own panel. With
+             <b>Heatmap</b>, every feature is a row too, sorted by signal or grouped into clusters, so you see whether a
+             change touches every gene a little or some genes a lot. Limit it to a list of genes with <b>Only these</b>.</p>
+        </div>
+        <div class="help-card">
+          <h3>Difference between two tracks</h3>
+          <p>A new coverage track of track A against track B: A minus B, log2(A / B), A / B, or their mean, in steps of
+             50 bp to 1 kb. It is kept for your lab like an upload, shown at once, and can be drawn in Circos plots
+             and profiles like any track. For a ratio, the pseudocount is added to both so that zero does not divide.</p>
+        </div>
+        <div class="help-card">
+          <h3>Replicate check</h3>
+          <p>The chosen tracks compared along the whole genome in bins (5 to 100 kb): a heatmap of their correlations
+             (Pearson, or Spearman on ranks), clustered, with the values written in, and a principal component plot.
+             Replicates should sit together and mutants apart; one that does not is worth a look before trusting it.</p>
+        </div>
+        <div class="help-card">
+          <h3>Signal per feature</h3>
+          <p>The mean of each coverage track over every feature of one type, as a table (CSV) with each feature's name
+             and position: one row per gene, say. With two tracks, their difference too, and the fifty features that differ
+             most are shown straight away.</p>
+        </div>
+        <div class="help-card">
+          <h3>Tracks over the selection</h3>
+          <p>A bar chart of each coverage track's mean over the region you selected, in the tracks' colours.</p>
+        </div>
+        <div class="help-card">
+          <h3>Synteny dot plot</h3>
+          <p>A links (BEDPE) track with the genome along both sides: each link a short line from one region to the
+             other, drawn both ways round, so blocks that kept their order show as diagonals.</p>
+        </div>
+      </div>
+      <p>The first four run on the server and can take a while: seconds for a replicate check, a few minutes for a
+         profile of every gene with several tracks. The panel says how long it has been working and whether it is waiting
+         for another job; you can close it and keep browsing, and up to three can wait at once. Results are kept for seven
+         days. Only tracks you may see can be used. They are drawn with
+         <a href="https://deeptools.readthedocs.io" target="_blank" rel="noopener">deepTools</a>; cite it if a figure goes
+         into a paper (see About).</p>
     </section>
 
     <section id="genome">
@@ -422,6 +485,12 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
              by Circos on the server; saved to the notebook, as SVG, or as Circos's own files to change.</p>
         </div>
         <div class="help-card">
+          <h3>{_glyph(s, 'line')} Analyse</h3>
+          <p>Metagene profiles and heatmaps around genes or transposons, difference tracks (mutant minus wild type),
+             replicate checks (correlation and PCA), signal per gene as a table, bar charts of a selection and synteny
+             dot plots, drawn with deepTools.</p>
+        </div>
+        <div class="help-card">
           <h3>{_glyph(s, 'history')} Your place, kept</h3>
           <p>Each person's view of each genome (where they were, which tracks) is remembered between
              visits.</p>
@@ -487,6 +556,10 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
          Circos plot goes into a paper, cite: Krzywinski M <i>et al.</i> <i>Circos: an information aesthetic for
          comparative genomics.</i> Genome Research 19: 1639&ndash;1645 (2009).
          <a href="https://doi.org/10.1101/gr.092759.109">doi:10.1101/gr.092759.109</a></p>
+      <p>Profiles, heatmaps, difference tracks and replicate checks are drawn by <b>deepTools</b> (installed from
+         Debian's package, under its own open-source licence). If one goes into a paper, cite: Ram&iacute;rez F <i>et al.</i> <i>deepTools2: a next
+         generation web server for deep-sequencing data analysis.</i> Nucleic Acids Research 44: W160&ndash;W165 (2016).
+         <a href="https://doi.org/10.1093/nar/gkw257">doi:10.1093/nar/gkw257</a></p>
       <p>The Genome Browser is free software under the GNU General Public License v3.0.</p>
     </section>
 """

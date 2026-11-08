@@ -51,6 +51,7 @@ from pathlib import Path
 
 import conversion
 import conversion_queue
+import analysis
 import bundled
 import db
 
@@ -207,7 +208,8 @@ def run_once(conn, data_root, config: WorkerConfig) -> bool:
     # 2. Claim the oldest queued job (serialized; concurrency 1).
     job = conversion_queue.claim_next_job(conn)
     if job is None:
-        return False
+        # No conversion waiting: an analysis from the Analyse panel (analysis.py), if any.
+        return run_analysis(conn, data_root)
 
     job_id = job['id']
     track_id = job['track_id']
@@ -240,6 +242,25 @@ def run_once(conn, data_root, config: WorkerConfig) -> bool:
         conversion_queue.mark_failed(
             conn, job_id,
             outcome.error or 'Conversion failed for an unknown reason.')
+    return True
+
+
+_last_tidy = [0.0]
+
+
+def run_analysis(conn, data_root) -> bool:
+    """Run the oldest queued analysis, if there is one; tidy old ones away now and then."""
+    if time.time() - _last_tidy[0] > 3600:
+        _last_tidy[0] = time.time()
+        try:
+            analysis.tidy(conn, Path(data_root))
+        except Exception as exc:  # tidying never stops the worker
+            print(f'[genome-worker] could not tidy old analyses: {exc}', flush=True)
+    job = analysis.claim_next(conn)
+    if job is None:
+        return False
+    print(f"[genome-worker] analysis {job['id']} ({job['kind']}) started.", flush=True)
+    analysis.run_job(conn, Path(data_root), job)
     return True
 
 
@@ -277,6 +298,9 @@ def main() -> None:
             f"{summary['failed']} track(s) failed (input gone).",
             flush=True)
 
+        requeued = analysis.recover(conn)
+        if requeued:
+            print(f'[genome-worker] {requeued} analysis job(s) left running re-queued.', flush=True)
         # The genome the browser ships with (bundled.py), on a volume's first start.
         try:
             added = bundled.seed(conn, config.data_root)

@@ -26,6 +26,7 @@ from pathlib import Path
 from flask import Flask, jsonify
 
 import db
+from analysis import register_analysis
 from circos_plot import register_circos
 from figures import register_figures
 from genomes import register_genomes
@@ -36,7 +37,7 @@ from sharing import register_sharing
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.7.0'
+APP_VERSION = '0.8.0'
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ def create_app(config: Config = None) -> Flask:
     register_tracks(app)
     register_figures(app)
     register_circos(app)
+    register_analysis(app)
     register_regions(app)
     register_tags(app)
     register_views(app)
