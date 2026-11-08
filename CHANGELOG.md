@@ -9,6 +9,15 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-08
+
+### Fixed
+- **A track's colour as a hex code, from its own menu.** igv's Set track color, More Colors had its hex box
+  turned off and opened past the right edge of the window, so its Ok could not be reached. It now shows the box
+  (the colour written as `#rrggbb` when clicked; type a code, then Enter or Ok) and stays in view. A colour
+  chosen there is now saved with the view straight away (igv tells nobody of it, so it was kept only once
+  something else saved the view). Bulk track settings took hex codes already.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

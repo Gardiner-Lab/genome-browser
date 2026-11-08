@@ -547,6 +547,7 @@
                 browser.on('trackremoved', function () { scheduleSave(); renderTrackPanel(); });
                 browser.on('trackorderchanged', function () { scheduleSave(); renderTrackPanel(); });
                 browser.on('trackheightchange', scheduleSave);
+                fixIgvColourPicker();
                 // A region drawn with igv's region tool becomes the selection.
                 browser.on('roiadded', function (rois) {
                     var r = rois && rois[0];
@@ -582,6 +583,44 @@
 
     // Keeps the member's view (where they are, which tracks, in what order) so
     // the genome reopens the same way.
+    // igv's own "Set track color" picker (in its shadow root): its "More Colors" panel has its hex box turned
+    // off and opens past the right edge of the window, so its Ok cannot be reached. Show the box (a colour as
+    // #e41a1c, or rgb(...)) and keep the panel in view; and since igv tells nobody a colour changed, save the
+    // view after a colour is chosen there, so it is there next time.
+    function fixIgvColourPicker() {
+        var root = el('igv-container').shadowRoot;
+        if (!root || root.getElementById('trellis-colour-fix')) { return; }
+        var style = document.createElement('style');
+        style.id = 'trellis-colour-fix';
+        style.textContent =
+            '.picker_wrapper.no_editor .picker_editor { position: static !important; opacity: 1 !important; ' +
+            'z-index: auto !important; width: 100%; order: 1; }' +
+            '.picker_wrapper.no_editor .picker_editor input { font-family: monospace; }' +
+            '.picker_wrapper.popup { left: auto !important; right: 0 !important; }';
+        root.appendChild(style);
+        var chosen = function (event) {
+            var path = event.composedPath ? event.composedPath() : [];
+            var inPicker = path.some(function (n) {
+                return n.classList && (n.classList.contains('igv-ui-colorpicker-container') || n.classList.contains('picker_wrapper'));
+            });
+            if (!inPicker) { return; }
+            if (event.type === 'keyup' && event.key !== 'Enter') { return; }
+            setTimeout(function () { scheduleSave(); renderTrackPanel(); }, 300);
+        };
+        root.addEventListener('click', chosen, true);
+        root.addEventListener('keyup', chosen, true);
+        // Write the colour in the box as a hex code, the way people copy colours, when the panel opens.
+        root.addEventListener('focusin', function (event) {
+            var input = event.target;
+            if (!input || !input.closest || !input.closest('.picker_editor')) { return; }
+            var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(input.value);
+            if (m) {
+                input.value = '#' + [m[1], m[2], m[3]].map(function (v) { return ('0' + (+v).toString(16)).slice(-2); }).join('');
+                input.select();
+            }
+        });
+    }
+
     function scheduleSave() {
         if (state.saveTimer) { clearTimeout(state.saveTimer); }
         state.saveTimer = setTimeout(saveView, 800);

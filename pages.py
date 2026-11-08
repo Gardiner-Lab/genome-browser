@@ -123,7 +123,9 @@ def help_html(static_prefix: str, prefix: str) -> str:
             are drawn (<i>expanded</i>, every transcript on its own row; <i>squished</i>; <i>collapsed</i>) and,
             for coverage, the <b>scale</b>: each its own, <i>shared</i> so their heights compare, or a fixed
             range. All ticked tracks change together, and the settings are kept with your view. One track's
-            gear (<b>⚙</b>) at its right does the same for that track alone.</td></tr>
+            gear (<b>⚙</b>) at its right does the same for that track alone: for a hex code there, choose
+            <b>Set track color</b>, then <b>More Colors</b>, click in the box under the colour field (it shows
+            the colour as <code>#rrggbb</code>), type the code and press <b>Enter</b> or <b>Ok</b>.</td></tr>
         <tr><th>Reorder or remove a track</th><td>Drag it by the grey handle at its right edge; remove it
             from its gear menu.</td></tr>
       </table>
