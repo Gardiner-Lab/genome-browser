@@ -54,6 +54,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 TRACK_FORMAT_EXTENSIONS: Dict[str, Tuple[str, ...]] = {
     'bigwig': ('.bw', '.bigwig'),
     'bed': ('.bed',),
+    'bedpe': ('.bedpe',),
     'gff': ('.gff', '.gff3'),
     'bam': ('.bam',),
     'wig': ('.wig', '.wiggle', '.bedgraph', '.bg'),
@@ -69,6 +70,8 @@ SUPPORTED_FORMATS: Tuple[Dict[str, object], ...] = (
      'track_type': 'bed'},
     {'format': 'gff', 'label': 'GFF/GFF3', 'handling': 'stored directly',
      'track_type': 'gff'},
+    {'format': 'bedpe', 'label': 'BEDPE (links between regions, such as synteny)',
+     'handling': 'stored directly', 'track_type': 'bedpe'},
     {'format': 'bam', 'label': 'BAM', 'handling': 'converted to BigWig',
      'track_type': 'bigwig'},
     {'format': 'wig', 'label': 'wig/wiggle', 'handling': 'converted to BigWig',
@@ -76,7 +79,7 @@ SUPPORTED_FORMATS: Tuple[Dict[str, object], ...] = (
 )
 
 # Formats stored as-is vs routed through the conversion worker (task 8/9).
-DIRECT_STORE_FORMATS = frozenset({'bigwig', 'bed', 'gff'})
+DIRECT_STORE_FORMATS = frozenset({'bigwig', 'bed', 'gff', 'bedpe'})
 CONVERSION_FORMATS = frozenset({'bam', 'wig'})
 
 # The reference-genome upload format (never a track).
@@ -372,6 +375,33 @@ def scan_bed_intervals(text: str) -> HeaderResult:
     return HeaderResult(chrom_extents=extents)
 
 
+def scan_bedpe_intervals(text: str) -> HeaderResult:
+    """
+    Scan a BEDPE file (links: two regions a line) for its chromosomes and extents.
+
+    BEDPE is ``chrom1 start1 end1 chrom2 start2 end2 [name score ...]``, 0-based
+    and half-open, as BED. Both ends count: each end's chromosome must be in the
+    genome and its end within it, as for a BED interval. Comments, ``track`` and
+    ``browser`` lines and a header line (``#chrom1 ...``) are skipped.
+    """
+    extents: Dict[str, int] = {}
+    for raw in split_lines(text):
+        line = raw.rstrip('\n')
+        if _is_feature_comment(line) or line.lower().startswith('chrom1'):
+            continue
+        fields = line.split('\t') if '\t' in line else line.split()
+        if len(fields) < 6:
+            continue
+        for chrom, end in ((fields[0], fields[2]), (fields[3], fields[5])):
+            if chrom in ('.', ''):
+                continue
+            extents.setdefault(chrom, 0)
+            value = _int_or_none(end)
+            if value is not None:
+                extents[chrom] = max(extents[chrom], value)
+    return HeaderResult(chrom_extents=extents)
+
+
 def scan_gff_intervals(text: str) -> HeaderResult:
     """
     Scan a GFF/GFF3 file for chromosomes and their furthest coordinate.
@@ -590,6 +620,8 @@ def read_track_header(fmt: str, path: str) -> HeaderResult:
         return scan_bed_intervals(_read_text(path))
     if fmt in ('gff',):
         return scan_gff_intervals(_read_text(path))
+    if fmt in ('bedpe',):
+        return scan_bedpe_intervals(_read_text(path))
     if fmt in ('wig',):
         return scan_wig_chroms(_read_text(path))
     return HeaderResult(reason=f'Unsupported format for header read: {fmt!r}')

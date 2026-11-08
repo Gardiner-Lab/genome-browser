@@ -569,6 +569,10 @@ def _add_feature_track(conn, data_root, genome, member, owner_lab, name, fmt,
             except (OSError, EOFError) as exc:
                 return jsonify({'error': f'The file could not be unpacked: '
                                          f'{exc}.'}), 400
+        if fmt == 'bedpe' and scratch_path.stat().st_size > MAX_LINKS_BYTES:
+            # The browser reads a links file whole: synteny is small; Hi-C contacts are not for here.
+            return jsonify({'error': f'A links (BEDPE) file can be at most {MAX_LINKS_BYTES // 1_000_000} MB '
+                                     '(unpacked). Keep the strongest links, or bin them, and upload that.'}), 413
 
         chrom_sizes = _chrom_sizes(conn, genome['id'])
         header = readers.read_track_header(fmt, str(scratch_path))
@@ -607,15 +611,17 @@ def _add_feature_track(conn, data_root, genome, member, owner_lab, name, fmt,
         report = match.report()
         track_id = uuid.uuid4().hex
         stored_path = _store_file(data_root, track_id, scratch_path)
-        try:
-            # Index it now so the first view is a lookup; if this fails, the
-            # first region read builds it instead.
-            feature_index.build(stored_path, regions.feature_parser(fmt))
-        except (OSError, sqlite3.Error):
-            pass
-        # And the sorted, compressed copy the viewer reads (serving.py); if the
-        # tools are missing, the first view makes it instead.
-        serving.prepare_feature_track(stored_path, fmt)
+        if fmt != 'bedpe':
+            # Links (BEDPE) are read whole, by the viewer and by Circos: no index.
+            try:
+                # Index it now so the first view is a lookup; if this fails, the
+                # first region read builds it instead.
+                feature_index.build(stored_path, regions.feature_parser(fmt))
+            except (OSError, sqlite3.Error):
+                pass
+            # And the sorted, compressed copy the viewer reads (serving.py); if the
+            # tools are missing, the first view makes it instead.
+            serving.prepare_feature_track(stored_path, fmt)
         _insert_track(conn, track_id, genome['id'], name, fmt, owner_lab,
                       member, track_status='ready', file_path=str(stored_path),
                       chrom_check=report)
@@ -975,6 +981,8 @@ _EXPORT_EXTENSIONS = {'bigwig': '.bw'}
 # Content types by stored track type; feature formats have no single registered
 # type, so the octet-stream default below is used for them.
 _EXPORT_MIMETYPES = {'bigwig': 'application/octet-stream'}
+# A links (BEDPE) track: synteny blocks and the like, read whole by the viewer and by Circos.
+MAX_LINKS_BYTES = 100_000_000
 
 
 def _export_filename(track_name: str, track_type: str, file_path: str) -> str:

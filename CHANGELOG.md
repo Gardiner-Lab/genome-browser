@@ -9,6 +9,31 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-08
+
+### Added
+- **Circos plots.** **Circos plot**, beside Save to notebook, draws the genome round a circle with every
+  track shown, outermost first, in the tracks' own colours: coverage as its mean signal along the genome,
+  a gene annotation as genes per step, other feature tracks as features per step, links as arcs across
+  the circle. Choose:
+  - each ring's style (histogram, line or heatmap) and height (thin, normal, tall);
+  - the whole genome (small chromosomes left out or not), chosen chromosomes, or a region;
+  - coarse, medium or fine detail, or an exact step size;
+  - a shared scale for the coverage rings, so their heights compare, and a log scale;
+  - the selection highlighted through the rings, genes labelled by name, and a title.
+  The plot opens like a figure, with a legend and notes (a gene not found, links left out): save it to the
+  Lab Notebook, download the SVG, or download Circos's own files to change it and run Circos again. The
+  choices are kept for the next plot of the genome. Drawn by Circos (circos.ca, GPL), now installed in
+  the image; credited and cited on the About page and in NOTICE; explained on the Help page.
+- **Links tracks (BEDPE).** A track of links between two regions (synteny blocks, duplications,
+  structural variants): `chrom1 start1 end1 chrom2 start2 end2 [name score]`, up to 100 MB. Both ends
+  are checked against the genome and their chromosome names matched, as for other tracks. Drawn as
+  arcs in the browser and across a Circos plot (the 25,000 highest-scoring links, at most).
+
+### Changed
+- The bundled genome is fetched first in the image build, checked by `ADD --checksum`, so a change to
+  the packages no longer downloads it again.
+
 ## [0.6.0] - 2026-11-08
 
 ### Changed

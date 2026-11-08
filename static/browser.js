@@ -102,6 +102,7 @@
     function trackKind(type) {
         if (type === 'gff') { return 'Gene annotation (GFF)'; }
         if (type === 'bed') { return 'Intervals (BED)'; }
+        if (type === 'bedpe') { return 'Links (BEDPE)'; }
         if (type === 'bigwig') { return 'Coverage (BigWig)'; }
         return type;
     }
@@ -462,6 +463,12 @@
             } else if (opt.scale === 'group') {
                 config.autoscaleGroup = SHARED_SCALE;
             }
+        } else if (t.type === 'bedpe') {
+            // Links between two regions (synteny and the like), drawn as arcs between them.
+            config = {
+                name: t.name, type: 'interact', format: 'bedpe', url: base + '/links.bedpe',
+                arcType: 'nested', arcOrientation: 'UP', height: 120, trellisId: t.id
+            };
         } else {
             var ext = t.type === 'bed' ? 'bed' : 'gff3';
             config = {
@@ -1048,7 +1055,7 @@
     // The formats the server takes (readers.TRACK_FORMAT_EXTENSIONS), by
     // extension, ignoring a trailing .gz.
     var TRACK_FORMATS = {
-        gff: 'Gene annotation (GFF)', gff3: 'Gene annotation (GFF)', bed: 'Intervals (BED)',
+        gff: 'Gene annotation (GFF)', gff3: 'Gene annotation (GFF)', bed: 'Intervals (BED)', bedpe: 'Links (BEDPE)',
         bw: 'Coverage (BigWig)', bigwig: 'Coverage (BigWig)',
         bam: 'BAM, converted to coverage', wig: 'wig, converted to coverage', wiggle: 'wig, converted to coverage',
         bedgraph: 'bedGraph, converted to coverage', bg: 'bedGraph, converted to coverage'
@@ -1492,7 +1499,7 @@
             var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
             var img = new Image();
             img.onload = function () {
-                var scale = 2;
+                var scale = img.naturalWidth > 1500 ? 1 : 2;
                 var canvas = document.createElement('canvas');
                 canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
                 canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -1511,20 +1518,32 @@
     }
 
     function defaultFigureTitle(fig) {
+        if (fig.kind === 'circos') { return 'Circos plot: ' + (fig.title || state.genome.assembly_id + ', ' + fig.locus); }
         var what = fig.selection && fig.selection.name ? fig.selection.name + ', ' : '';
         return 'Genome Browser: ' + what + state.genome.assembly_id + ' ' + fig.locus;
     }
 
-    function openFigureDialog() {
+    function openFigureDialog(made) {
         if (!state.browser) { return; }
         var form = el('figure-form');
         form.reset();
         form.querySelector('.gb-error').hidden = true;
         el('figure-done').hidden = true;
-        var fig;
-        try { fig = currentFigure(); } catch (e) {
-            selectionError('The view could not be drawn as a figure: ' + e.message);
-            return;
+        var fig = made && made.svg ? made : null;
+        if (!fig) {
+            try { fig = currentFigure(); } catch (e) {
+                selectionError('The view could not be drawn as a figure: ' + e.message);
+                return;
+            }
+        }
+        el('figure-dialog-title').textContent = fig.kind === 'circos' ? 'Circos plot' : 'Save this view as a figure';
+        el('figure-what').textContent = fig.kind === 'circos'
+            ? 'The ' + fig.locus + ' with the tracks shown, as rings (outermost first, as in the legend), binned by ' +
+              fig.binSize.toLocaleString('en-US') + ' bp. Circos’s own files can be downloaded to change it and run Circos again.'
+            : 'Exactly what is on screen: the tracks, the position and any selection.';
+        el('figure-circos-files').hidden = !fig.bundle;
+        if (fig.notes && fig.notes.length) {
+            el('figure-what').textContent += ' ' + fig.notes.join(' ');
         }
         state.figure = fig;
         var preview = el('figure-preview');
@@ -1540,6 +1559,169 @@
         form.elements.title.focus();
         form.elements.title.select();
     }
+
+    function downloadCircosFiles() {
+        var fig = state.figure;
+        if (!fig || !fig.bundle) { return; }
+        var bytes = Uint8Array.from(atob(fig.bundle), function (c) { return c.charCodeAt(0); });
+        var a = make('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/zip' })), download: fig.filename + '-circos.zip' });
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+
+    // ------------------------------------------------------------------
+    // Circos plots: the genome round a circle, each track shown as a ring
+    // ------------------------------------------------------------------
+
+    // The tracks on screen, top to bottom, with the colours they are drawn in.
+    function shownTracks() {
+        if (!state.browser) { return []; }
+        return state.browser.findTracks(function (t) { return t.config && t.config.trellisId; }).map(function (t) {
+            var type = t.type === 'interact' ? 'bedpe' : t.type === 'wig' ? 'bigwig' : 'features';
+            return { id: t.config.trellisId, name: t.name, color: t.color || t.config.color || '', type: type };
+        });
+    }
+
+    // What was chosen last time, per genome, so drawing again starts from it.
+    function circosChoices() {
+        state.circos = state.circos || {};
+        var key = state.genome.id;
+        state.circos[key] = state.circos[key] || { rings: {} };
+        return state.circos[key];
+    }
+
+    function chromosomesOfGenome() {
+        var g = state.browser && state.browser.genome;
+        var names = (g && (g.chromosomeNames || g.wgChromosomeNames)) || [];
+        return names.filter(function (n) { return n && n.toLowerCase() !== 'all'; });
+    }
+
+    function openCircosDialog() {
+        if (!state.browser || !state.genome) { return; }
+        var form = el('circos-form');
+        var saved = circosChoices();
+        form.querySelector('.gb-error').hidden = true;
+        var tracks = shownTracks();
+
+        var list = el('circos-tracks');
+        list.replaceChildren.apply(list, tracks.length ? tracks.map(function (t, i) {
+            var swatch = make('span', { class: 'gb-circos-swatch', style: 'background:' + (t.color || '#888') });
+            var name = make('span', { class: 'gb-circos-name', text: (i + 1) + '. ' + t.name });
+            if (t.type === 'bedpe') {
+                return make('li', {}, [swatch, name, make('span', { class: 'gb-hint', text: 'links: arcs across the circle' })]);
+            }
+            var mine = saved.rings[t.id] || {};
+            var style = make('select', { 'data-ring': t.id, 'data-what': 'style', 'aria-label': 'How to draw ' + t.name },
+                [['histogram', 'Histogram'], ['line', 'Line'], ['heatmap', 'Heatmap']].map(function (o) {
+                    return make('option', { value: o[0], text: o[1] });
+                }));
+            style.value = mine.style || 'histogram';
+            var height = make('select', { 'data-ring': t.id, 'data-what': 'height', 'aria-label': 'How tall the ring for ' + t.name + ' is' },
+                [['1', 'Thin'], ['2', 'Normal'], ['3', 'Tall']].map(function (o) { return make('option', { value: o[0], text: o[1] }); }));
+            height.value = String(mine.height || 2);
+            return make('li', {}, [swatch, name, style, height]);
+        }) : [make('li', { class: 'gb-hint', text: 'No tracks are shown: show some first, then come back.' })]);
+
+        // Where: the whole genome, chosen chromosomes, or a region (the one in view to start with).
+        var chroms = chromosomesOfGenome();
+        var frame = state.browser.referenceFrameList && state.browser.referenceFrameList[0];
+        var inView = frame && frame.chr && frame.chr.toLowerCase() !== 'all' ? frame.chr : '';
+        var picked = new Set(saved.chroms || (inView ? [inView] : chroms.slice(0, 1)));
+        var boxes = el('circos-chroms');
+        boxes.replaceChildren.apply(boxes, chroms.map(function (c) {
+            var box = make('input', { type: 'checkbox', value: c });
+            box.checked = picked.has(c);
+            box.addEventListener('change', function () { form.elements.where.value = 'chroms'; });
+            return make('label', {}, [box, document.createTextNode(' ' + c)]);
+        }));
+        form.elements.where.value = saved.where || 'genome';
+        // A selection fills in the region (its exact stretch); else the last region, else the one in view.
+        var picked0 = state.selection;
+        form.elements.region.value = picked0
+            ? picked0.chrom + ':' + (picked0.start + 1).toLocaleString('en-US') + '-' + picked0.end.toLocaleString('en-US')
+            : saved.region || (inView ? currentLocus(state.browser) : '');
+        ['title', 'resolution', 'step', 'labels'].forEach(function (k) {
+            if (saved[k] !== undefined) { form.elements[k].value = saved[k]; }
+        });
+        ['skip_small', 'shared_scale', 'log_scale'].forEach(function (k) {
+            if (saved[k] !== undefined) { form.elements[k].checked = saved[k]; }
+        });
+        var sel = state.selection;
+        el('circos-highlight-row').hidden = !sel;
+        // Off unless ticked: a selection fills in the region, but shading the rings is a choice.
+        form.elements.highlight.checked = false;
+        if (sel) {
+            el('circos-highlight-text').textContent = (sel.name ? sel.name + ', ' : '') + sel.chrom + ':' +
+                (sel.start + 1).toLocaleString('en-US') + '-' + sel.end.toLocaleString('en-US');
+        }
+        el('circos-draw').disabled = !tracks.length;
+        el('circos-draw').textContent = 'Draw';
+        el('circos-dialog').showModal();
+    }
+
+    function drawCircos(event) {
+        event.preventDefault();
+        var form = el('circos-form');
+        var tracks = shownTracks();
+        if (!tracks.length) { return; }
+        form.querySelector('.gb-error').hidden = true;
+        var saved = circosChoices();
+        Array.prototype.forEach.call(form.querySelectorAll('[data-ring]'), function (s) {
+            var id = s.getAttribute('data-ring');
+            var r = saved.rings[id] = saved.rings[id] || {};
+            r[s.getAttribute('data-what')] = s.getAttribute('data-what') === 'height' ? Number(s.value) : s.value;
+        });
+        var where = form.elements.where.value;
+        var chroms = Array.prototype.filter.call(el('circos-chroms').querySelectorAll('input'), function (b) { return b.checked; })
+            .map(function (b) { return b.value; });
+        if (where === 'chroms' && !chroms.length) { formError(form, ['Tick at least one chromosome.']); return; }
+        if (where === 'region' && !form.elements.region.value.trim()) {
+            formError(form, ['Write the region, as Chr1:1,000,000-5,000,000.']);
+            return;
+        }
+        var step = Number(form.elements.step.value) || null;
+        Object.assign(saved, {
+            where: where, chroms: chroms, region: form.elements.region.value.trim(), title: form.elements.title.value,
+            resolution: form.elements.resolution.value, step: form.elements.step.value, labels: form.elements.labels.value,
+            skip_small: form.elements.skip_small.checked, shared_scale: form.elements.shared_scale.checked,
+            log_scale: form.elements.log_scale.checked, highlight: form.elements.highlight.checked
+        });
+        var sel = state.selection;
+        el('circos-draw').disabled = true;
+        el('circos-draw').textContent = 'Drawing… (up to a minute)';
+        postJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/circos', {
+            tracks: tracks.map(function (t) {
+                var r = saved.rings[t.id] || {};
+                return { id: t.id, color: t.color, style: r.style || 'histogram', height: r.height || 2 };
+            }),
+            chroms: where === 'chroms' ? chroms : null,
+            region: where === 'region' ? form.elements.region.value.trim() : null,
+            resolution: form.elements.resolution.value, step: step,
+            skip_small: form.elements.skip_small.checked,
+            shared_scale: form.elements.shared_scale.checked, log_scale: form.elements.log_scale.checked,
+            highlight: sel && form.elements.highlight.checked ? { chrom: sel.chrom, start: sel.start, end: sel.end } : null,
+            labels: form.elements.labels.value, title: form.elements.title.value.trim()
+        }).then(function (out) {
+            el('circos-dialog').close();
+            var base = ['circos', state.genome.assembly_id, out.where].join('_').replace(/[^\w.-]+/g, '_').slice(0, 80);
+            openFigureDialog({
+                kind: 'circos', svg: out.svg, bundle: out.bundle, binSize: out.bin_size, notes: out.notes || [],
+                locus: out.where, filename: base, selection: null, title: out.title,
+                tracks: out.rings.map(function (r) { return r.name + ' (' + r.what + ')'; })
+            });
+        }).catch(function (err) {
+            formError(form, ['Circos could not draw it: ' + err.message]);
+        }).then(function () {
+            el('circos-draw').disabled = false;
+            el('circos-draw').textContent = 'Draw';
+        });
+    }
+
+    // Typing in the region box chooses "a region".
+    el('circos-form').elements.region.addEventListener('input', function () {
+        el('circos-form').elements.where.value = 'region';
+    });
 
     function downloadFigureSvg() {
         var fig = state.figure;
@@ -1591,7 +1773,13 @@
         }).then(function (added) {
             var png = added[0], svgFile = added[1];
             var where = state.genome.name + ' (' + state.genome.assembly_id + '), ' + fig.locus;
-            var lines = ['<p><b>From the Genome Browser:</b> ' + escapeHtml(where) + '.</p>'];
+            var lines = ['<p><b>' + (fig.kind === 'circos' ? 'A Circos plot from the Genome Browser:' : 'From the Genome Browser:') +
+                '</b> ' + escapeHtml(where) + '.</p>'];
+            if (fig.kind === 'circos') {
+                lines.push('<p>Rings, outermost first, in bins of ' + fig.binSize.toLocaleString('en-US') +
+                    ' bp. Drawn with Circos: Krzywinski M et al. (2009) Circos: an information aesthetic for comparative genomics. ' +
+                    'Genome Research 19: 1639–1645.</p>');
+            }
             if (fig.tracks.length) {
                 lines.push('<p>Tracks: ' + escapeHtml(fig.tracks.join('; ')) + '.</p>');
             }
@@ -1937,7 +2125,11 @@
     el('tp-range-form').addEventListener('submit', setRange);
     el('tp-remove').addEventListener('click', removeTicked);
 
-    el('figure-open').addEventListener('click', openFigureDialog);
+    el('figure-open').addEventListener('click', function () { openFigureDialog(); });
+    el('circos-open').addEventListener('click', openCircosDialog);
+    el('circos-form').addEventListener('submit', drawCircos);
+    el('circos-close').addEventListener('click', function () { el('circos-dialog').close(); });
+    el('figure-circos-files').addEventListener('click', downloadCircosFiles);
     el('figure-form').addEventListener('submit', saveFigureToNotebook);
     el('figure-svg').addEventListener('click', downloadFigureSvg);
     el('figure-close').addEventListener('click', function () { el('figure-dialog').close(); });

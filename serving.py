@@ -199,6 +199,14 @@ def register_serving(app: Flask) -> None:
             abort(404)
         return _send(Path(track['file_path']), 'application/octet-stream')
 
+    @app.route('/api/tracks/<track_id>/links.bedpe')
+    def track_links(track_id):
+        """A links track (BEDPE), whole: the viewer draws it as arcs."""
+        track = _viewable_track(track_id)
+        if track['type'] != 'bedpe':
+            abort(404)
+        return _send(Path(track['file_path']), 'text/plain')
+
     @app.route('/api/tracks/<track_id>/features.<ext>.gz')
     def track_features(track_id, ext):
         track = _viewable_feature_track(track_id, ext)

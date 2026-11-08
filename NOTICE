@@ -35,3 +35,8 @@ If a view from this tool goes into a paper, cite igv.js:
     James T Robinson, Helga Thorvaldsdottir, Douglass Turner, Jill P Mesirov,
     igv.js: an embeddable JavaScript implementation of the Integrative Genomics
     Viewer (IGV), Bioinformatics. https://doi.org/10.1093/bioinformatics/btac830
+
+Circos plots are drawn by Circos 0.69 (https://circos.ca), by Martin Krzywinski,
+GNU General Public License, installed into the image from Debian's circos
+package. Krzywinski M et al. (2009) Circos: an information aesthetic for
+comparative genomics. Genome Research 19: 1639-1645.

@@ -204,6 +204,16 @@ def rename_feature_line(line: str, fmt: str, renames: Dict[str, str]) -> str:
     if (stripped == '' or stripped.startswith('#')
             or stripped.startswith('track ') or stripped.startswith('browser ')):
         return line
+    if fmt == 'bedpe':
+        # Two chromosome columns: the first and the fourth.
+        body = line.rstrip('\r\n')
+        ending = line[len(body):]
+        tabbed = '\t' in body
+        fields = body.split('\t') if tabbed else body.split()
+        for i in (0, 3):
+            if len(fields) > i and fields[i] in renames:
+                fields[i] = renames[fields[i]]
+        return ('\t' if tabbed else ' ').join(fields) + ending
     sep = '\t' if '\t' in line else None
     if sep:
         first, _, rest = line.partition('\t')

@@ -641,6 +641,8 @@ def _browser_html(static_prefix: str) -> str:
           <span class="gb-bulk-icon" aria-hidden="true"></span>Bulk track settings</button>
         <button type="button" class="tt-btn" id="figure-open"
                 title="Save this view as a figure: to your Lab Notebook as a page under today, or as an SVG file">Save to notebook</button>
+        <button type="button" class="tt-btn" id="circos-open"
+                title="Draw the genome round a circle with the tracks shown as rings: a Circos plot, as SVG, PNG or to your Lab Notebook">Circos plot</button>
         <span class="gb-tool-sep" aria-hidden="true"></span>
         <button type="button" class="tt-btn gb-mode" id="select-mode" aria-pressed="false"
                 title="While on, dragging across the tracks selects sequence instead of moving along">
@@ -792,10 +794,63 @@ def _browser_html(static_prefix: str) -> str:
     </form>
   </dialog>
 
+  <dialog id="circos-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="circos-dialog-title">
+    <form method="dialog" id="circos-form" novalidate>
+      <h2 id="circos-dialog-title">Circos plot</h2>
+      <p class="gb-hint">The genome drawn round a circle with the tracks shown, made with Circos (circos.ca). Show,
+        hide, order and colour the tracks in the browser first; see Help for how each is drawn.</p>
+      <label class="gb-field">Title <span class="gb-hint">(optional)</span>
+        <input name="title" maxlength="120" placeholder="The genome and what is drawn">
+      </label>
+      <h3 class="gb-share-h">Tracks, outermost ring first</h3>
+      <ul class="gb-circos-tracks" id="circos-tracks"></ul>
+      <fieldset class="gb-field">
+        <legend>Draw</legend>
+        <label><input type="radio" name="where" value="genome" checked> The whole genome</label>
+        <label class="gb-check gb-circos-indent"><input type="checkbox" name="skip_small" checked> Leave out small
+          chromosomes (organelles, scaffolds: under 1% of the genome)</label>
+        <label><input type="radio" name="where" value="chroms"> These chromosomes:</label>
+        <div class="gb-circos-chroms gb-circos-indent" id="circos-chroms"></div>
+        <label><input type="radio" name="where" value="region"> A region:
+          <input name="region" class="gb-circos-region" placeholder="Chr1:1,000,000-5,000,000" spellcheck="false"></label>
+      </fieldset>
+      <div class="gb-circos-row">
+        <label class="gb-field">Detail
+          <select name="resolution">
+            <option value="coarse">Coarse (about 300 steps)</option>
+            <option value="medium" selected>Medium (about 800)</option>
+            <option value="fine">Fine (about 2,000: slower)</option>
+          </select>
+        </label>
+        <label class="gb-field">or steps of exactly <span class="gb-hint">(bp)</span>
+          <input name="step" type="number" min="100" step="100" placeholder="e.g. 100000">
+        </label>
+      </div>
+      <fieldset class="gb-field">
+        <legend>Scale</legend>
+        <label class="gb-check"><input type="checkbox" name="shared_scale"> Coverage rings share one scale, so their
+          heights compare</label>
+        <label class="gb-check"><input type="checkbox" name="log_scale"> Coverage on a log scale (for a few high peaks)</label>
+      </fieldset>
+      <label class="gb-check" id="circos-highlight-row"><input type="checkbox" name="highlight">
+        Highlight the selection, <span id="circos-highlight-text"></span></label>
+      <label class="gb-field">Label genes <span class="gb-hint">(optional: names as in a gene annotation track shown,
+        separated by commas, up to 100)</span>
+        <textarea name="labels" rows="2" maxlength="4000" placeholder="AT1G01010, AT3G24650" spellcheck="false"></textarea>
+      </label>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <span class="gb-spacer"></span>
+        <button type="button" class="tt-btn" id="circos-close">Cancel</button>
+        <button type="submit" class="tt-btn primary" id="circos-draw">Draw</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="figure-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="figure-dialog-title">
     <form method="dialog" id="figure-form" novalidate>
       <h2 id="figure-dialog-title">Save this view as a figure</h2>
-      <p class="gb-hint">Exactly what is on screen: the tracks, the position and any selection.</p>
+      <p class="gb-hint" id="figure-what">Exactly what is on screen: the tracks, the position and any selection.</p>
       <div class="gb-figure-preview"><img id="figure-preview" alt="The figure as it will be saved"></div>
       <label class="gb-field">Page title
         <input name="title" maxlength="200">
@@ -808,6 +863,8 @@ def _browser_html(static_prefix: str) -> str:
       <div class="gb-error" role="alert" hidden></div>
       <div class="gb-dialog-actions">
         <button type="button" class="tt-btn" id="figure-svg">Download SVG</button>
+        <button type="button" class="tt-btn" id="figure-circos-files" hidden
+                title="Circos's own configuration and data files, to change the plot and run Circos again">Download Circos files</button>
         <span class="gb-spacer"></span>
         <button type="button" class="tt-btn" id="figure-close">Close</button>
         <button type="submit" class="tt-btn primary" id="figure-save">Save to Lab Notebook</button>
@@ -821,7 +878,7 @@ def _browser_html(static_prefix: str) -> str:
       <p class="gb-hint">To <strong id="track-genome-name"></strong>. <span id="track-owner"></span></p>
       <div class="gb-drop" id="track-drop">
         <input type="file" id="track-files" multiple hidden
-               accept=".gff,.gff3,.bed,.bw,.bigwig,.bam,.wig,.wiggle,.bedgraph,.bg,.gz">
+               accept=".gff,.gff3,.bed,.bedpe,.bw,.bigwig,.bam,.wig,.wiggle,.bedgraph,.bg,.gz">
         <p><b>Drop files here</b>, or <button type="button" class="gb-link" id="track-browse">choose files</button>:
           one or as many as you like.</p>
         <p class="gb-hint">GFF or BED (features), BigWig (coverage), or BAM, wig and bedGraph, which are

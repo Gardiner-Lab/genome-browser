@@ -61,6 +61,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <a href="#select">Selecting sequence</a>
       <a href="#send">Sending sequence on</a>
       <a href="#figure">Saving a figure</a>
+      <a href="#circos">Circos plots</a>
       <a href="#genome">Adding a genome</a>
       <a href="#track">Adding tracks</a>
       <a href="#names">Chromosome names</a>
@@ -198,6 +199,70 @@ def help_html(static_prefix: str, prefix: str) -> str:
          of it shows on the page.</p>
     </section>
 
+    <section id="circos">
+      <h2>Circos plots</h2>
+      <p><b>Circos plot</b>, beside <b>Save to notebook</b>, draws the genome round a circle with every track you are
+         showing as a ring, using <a href="https://circos.ca" target="_blank" rel="noopener">Circos</a>. Show the tracks
+         you want, in the order you want, in the colours you want, then open it.</p>
+      <ol class="steps">
+        <li>Give it a <b>title</b>, or leave the genome and what is drawn as the title.</li>
+        <li>For each track, choose how its ring is drawn: <b>histogram</b>, <b>line</b> or <b>heatmap</b> (a band
+            shaded from white to the track's colour: compact, so many tracks fit), and how tall: <b>thin</b>,
+            <b>normal</b> or <b>tall</b>.</li>
+        <li>Choose what to draw: <b>the whole genome</b> (leaving out small chromosomes, under 1% of the genome, or
+            not), <b>chosen chromosomes</b>, or <b>a region</b> such as <code>Chr1:1,000,000-5,000,000</code> (filled in
+            with your selection if you have one, else the stretch in view; a region must be at least 1 kb).</li>
+        <li>Choose the <b>detail</b> (coarse, medium, fine) or give an exact step size in base pairs.</li>
+        <li>Optionally: let coverage rings <b>share one scale</b>, put coverage on a <b>log scale</b>,
+            <b>highlight the selection</b> you made in the browser, and <b>label genes</b> by name.</li>
+        <li><b>Draw</b>. A big genome with fine detail takes up to a minute. Your choices are kept for the next
+            plot of this genome.</li>
+      </ol>
+      <h3>How it is drawn</h3>
+      <ul>
+        <li><b>The outer ring is the genome</b>: each chromosome as a band in proportion to its length, named, with
+            ticks along it in megabases (kilobases for a small genome).</li>
+        <li><b>The genome is cut into equal steps</b> (bins) all the way round: about 300 for coarse, 800 for medium
+            and 2,000 for fine, the size rounded to 1, 2 or 5 times a power of ten. For Arabidopsis at medium that
+            is 200 kb. The plot says which size it used.</li>
+        <li><b>Each track is one ring</b>, inside the genome, in the order the tracks are shown (the top track
+            outermost), in its own colour, as a histogram: one bar per step.
+          <ul>
+            <li><b>Coverage</b> (BigWig): the mean signal over the step. A step with no data has no bar.</li>
+            <li><b>A gene annotation</b> (GFF): the number of genes that start in the step. Only features of type
+                <i>gene</i> are counted, so each gene counts once, not again for its mRNAs and exons; a GFF with no
+                genes has every feature counted.</li>
+            <li><b>Other feature tracks</b> (BED): the number of features that start in the step.</li>
+          </ul></li>
+        <li><b>Every ring has its own scale</b>, from nothing at its inner edge to its own highest value at its
+            outer edge, with a faint line halfway. So a ring shows where along the genome its track is high or low;
+            heights in two rings are not comparable, unless coverage rings <b>share one scale</b>: then they all run
+            to the highest value among them. A <b>log scale</b> draws log10(1 + the mean), so a few high peaks do not
+            flatten everything else.</li>
+        <li><b>Links</b> (BEDPE tracks) are drawn as arcs across the middle of the circle, inside the rings, in
+            the track's colour, from one region to the other. Only links with both ends in what is drawn are shown;
+            of very many, the 25,000 with the highest score (the file's eighth column) are drawn, and the plot says
+            so.</li>
+        <li><b>Gene labels</b> are written just inside the chromosomes, with a short line to each gene; names close
+            together are spread out. They are looked up in the gene annotation tracks shown, by the gene's name
+            there (for Araport11, its locus, such as <code>AT1G01010</code>); a name not found is listed with the
+            plot.</li>
+        <li><b>The selection</b>, if you tick <b>Highlight the selection</b> (it is off to start with), is shaded
+            pale yellow through all the rings.</li>
+        <li><b>A legend</b> in the corner names the rings, outermost first, and what each shows.</li>
+        <li>Only tracks you may see are drawn, at most 12 (links included); a track still being converted is not. A track's chromosome
+            names are matched to the genome's as on upload (<code>chr1</code> is <code>Chr1</code>).</li>
+      </ul>
+      <h3>Afterwards</h3>
+      <p>The plot opens like a figure: save it to your Lab Notebook (a page under today, with the picture, the SVG
+         and a note of what it shows), or download it as SVG. <b>Download Circos files</b> gives Circos's own files:
+         <code>circos.conf</code> (the rings, colours and ticks), <code>karyotype.txt</code> (the chromosomes),
+         <code>data/track-1.txt</code> and so on (one line per step: chromosome, start, end, value) and a
+         <code>README.txt</code>. Change them (a ring's colour or height, a scale, a heatmap instead of a histogram)
+         and run <code>circos -conf circos.conf</code> on a computer with Circos installed. If a Circos plot goes
+         into a paper, cite Circos (see About).</p>
+    </section>
+
     <section id="genome">
       <h2>Adding a genome</h2>
       <ol class="steps">
@@ -233,6 +298,11 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <table class="help-keys">
         <tr><th>GFF, GFF3</th><td>Gene annotations and other features, drawn as gene models.</td></tr>
         <tr><th>BED</th><td>Intervals: peaks, regions, primers.</td></tr>
+        <tr><th>BEDPE</th><td>Links between two regions: synteny blocks, duplications, structural variants. One link a
+            line: <code>chrom1 start1 end1 chrom2 start2 end2</code>, then optionally a name and a score (stronger
+            links are kept first when a Circos plot has too many). Shown as arcs, and in a Circos plot as arcs across
+            the circle. Both ends must be on this genome. At most 100 MB. Synteny tools (MCScanX, JCVI) list matching
+            genes; turn their blocks into regions first, for example with JCVI's <code>jcvi.compara.synteny</code>.</td></tr>
         <tr><th>BigWig</th><td>Coverage or signal, ready at once.</td></tr>
         <tr><th>BAM, wig, bedGraph</th><td>Converted to coverage on the server. It shows as
             <i>converting</i> under the list, then joins the list when ready; you can leave the page
@@ -337,13 +407,19 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
         </div>
         <div class="help-card">
           <h3>{_glyph(s, 'line')} Tracks</h3>
-          <p>Gene annotations and intervals (GFF, BED) and coverage (BigWig, or BAM and wig converted on the
-             server), each on the genome it was made for.</p>
+          <p>Gene annotations and intervals (GFF, BED), coverage (BigWig, or BAM and wig converted on the
+             server) and links between regions such as synteny (BEDPE), each on the genome it was made for.</p>
         </div>
         <div class="help-card">
           <h3>{_glyph(s, 'cut')} Sequence to take away</h3>
           <p>Select a feature or any stretch and open it in the Sequence Editor with its annotations, BLAST
              it, or download it as FASTA.</p>
+        </div>
+        <div class="help-card">
+          <h3>{_glyph(s, 'ratio')} Circos plots</h3>
+          <p>The whole genome, chosen chromosomes or a region round a circle, each track a ring (histogram, line or
+             heatmap), links such as synteny as arcs across it, genes labelled and the selection highlighted. Drawn
+             by Circos on the server; saved to the notebook, as SVG, or as Circos's own files to change.</p>
         </div>
         <div class="help-card">
           <h3>{_glyph(s, 'history')} Your place, kept</h3>
@@ -407,6 +483,10 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
          <i>The Arabidopsis Information Resource (TAIR): improved gene annotation and new tools.</i> Nucleic
          Acids Research 40: D1202&ndash;D1210 (2012).
          <a href="https://doi.org/10.1093/nar/gkr1090">doi:10.1093/nar/gkr1090</a></p>
+      <p>Circos plots are drawn by <b>Circos</b>, by Martin Krzywinski, under the GNU General Public License. If a
+         Circos plot goes into a paper, cite: Krzywinski M <i>et al.</i> <i>Circos: an information aesthetic for
+         comparative genomics.</i> Genome Research 19: 1639&ndash;1645 (2009).
+         <a href="https://doi.org/10.1101/gr.092759.109">doi:10.1101/gr.092759.109</a></p>
       <p>The Genome Browser is free software under the GNU General Public License v3.0.</p>
     </section>
 """

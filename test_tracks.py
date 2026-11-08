@@ -1024,3 +1024,26 @@ def test_export_missing_file_returns_404(lab_universe):
         conn.close()
     resp = _get(s['client'], f'/api/tracks/{tid}/export', 'alice')
     assert resp.status_code == 404
+
+
+def test_links_bedpe_are_checked_at_both_ends_renamed_and_served(seeded):
+    bedpe = (b'#chrom1\tstart1\tend1\tchrom2\tstart2\tend2\tname\tscore\n'
+             b'chr1\t10\t20\t2\t30\t40\tblock1\t5\n'
+             b'Chr1\t100\t200\tChr1\t600\t700\tblock2\t3\n')
+    resp = seeded['post']({'name': 'Synteny', 'file': (io.BytesIO(bedpe), 'synteny.bedpe')})
+    assert resp.status_code == 201, resp.get_json()
+    assert resp.get_json()['chrom_check']['renamed'] == {'chr1': 'Chr1', '2': 'Chr2'}
+    row = _tracks(seeded['data_root'])[0]
+    assert row['type'] == 'bedpe'
+    text = _stored_text(row)
+    assert 'Chr1\t10\t20\tChr2\t30\t40\tblock1\t5\n' in text
+    served = seeded['client'].get(f"/api/tracks/{row['id']}/links.bedpe", headers={'X-Suite-User': 'alice'})
+    assert served.status_code == 200 and b'Chr2\t30\t40' in served.data
+
+
+def test_a_link_past_the_chromosome_end_is_refused(seeded):
+    bedpe = b'Chr1\t10\t20\tChr2\t900\t5000\tx\t1\n'
+    resp = seeded['post']({'name': 'Synteny', 'file': (io.BytesIO(bedpe), 'synteny.bedpe')})
+    assert resp.status_code == 400
+    assert resp.get_json()['out_of_range'][0]['chrom'] == 'Chr2'
+    assert _tracks(seeded['data_root']) == []
