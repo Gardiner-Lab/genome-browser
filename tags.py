@@ -245,7 +245,8 @@ def _seed_labs_seen(member: str):
     """
     The lab names (casefolded) whose Seed Bank records this member sees: their
     own labs and the other labs of their chair groups, the Seed Bank's own rule
-    (seed-bank app/records.py ``sees``). None for an administrator: everything.
+    (seed-bank app/records.py ``sees``); someone in no lab, their own records
+    (kept under ``user:<username>``). None for an administrator: everything.
     """
     if identity.is_admin(member):
         return None
@@ -256,7 +257,8 @@ def _seed_labs_seen(member: str):
         group = labs_reader.chair_group_of(lab['lab_id'])
         for mate in labs_reader.labs_in_chair_group(group) if group else []:
             seen.add((labs_reader.lab_name(mate) or '').casefold())
-    return seen - {''}
+    seen.discard('')
+    return seen or {f'user:{member}'.casefold()}
 
 
 def seed_stock_search(member: str, query: str = '', limit: int = 30) -> list:

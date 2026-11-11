@@ -139,3 +139,9 @@ def test_a_tracks_metadata_names_its_genome(seeded):
     # What a notebook link (?track=) opens the track's genome by.
     body = seeded['client'].get(f"/api/tracks/{seeded['own']}", headers=who('alice')).get_json()
     assert body['genome_id'] == seeded['genome_id']
+
+
+def test_someone_in_no_lab_finds_their_own_seed_records(seeded):
+    # The Seed Bank keeps their records under user:<name>, and shows them those.
+    assert tags._seed_labs_seen('carol') == {'user:carol'}
+    assert 'lab a' in tags._seed_labs_seen('alice')

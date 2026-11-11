@@ -9,6 +9,12 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-11
+
+### Fixed
+- **Tagging a track, for someone in no lab.** The Seed Bank keeps such a person's lines, lots and plants as their
+  own and shows them those; a track's Details found none of them to tag. It now finds them too.
+
 ## [0.9.0] - 2026-11-11
 
 ### Added
