@@ -358,6 +358,11 @@ def help_html(static_prefix: str, prefix: str) -> str:
             open until they are through.</li>
         <li>The added tracks appear in the list, ticked, ready to open.</li>
       </ol>
+      <p>Name an <b>Experiment</b> above the files and every file added then is put in it. The track list groups
+         tracks under their experiment (<b>Sort by</b> also offers name, or newest first); <b>Tick these</b> beside an
+         experiment ticks all of its tracks. A track's <b>Details</b> changes its experiment, tags it with the
+         Seed Bank lines, seed lots and plants it comes from, and lists the Lab Notebook pages that link to it.
+         Only the track's own lab changes its experiment and tags.</p>
       <p>A refused file doesn't stop the rest. If it fits another of your genomes, its row offers
          <b>Add it to … instead</b>.</p>
       <table class="help-keys">
@@ -525,8 +530,10 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
             tracks on screen.</li>
         <li><b>Lab Notebook</b>: <b>Save to notebook</b> saves the view as a page under today, with the picture,
             what it shows, and the SVG to download.</li>
-        <li><b>Seed Bank</b> and plasmids: tracks and genomes can be tagged with the plasmid or seed line
-            they come from.</li>
+        <li><b>Seed Bank</b>: a track's <b>Details</b> tags it with the lines, seed lots and plants it comes from,
+            found by code or line name; each tag opens its record in the Seed Bank.</li>
+        <li><b>Lab Notebook</b> pages link to a track: type <b>@</b> in a page and choose <i>A genome track</i>. The
+            link opens the track's genome with it on, and the track's <b>Details</b> lists the pages.</li>
       </ul>
     </section>
 

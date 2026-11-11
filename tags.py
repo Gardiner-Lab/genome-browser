@@ -241,6 +241,60 @@ def seed_stock_lookup(stock_id: str) -> Tuple[bool, Optional[str]]:
     return False, None
 
 
+def _seed_labs_seen(member: str):
+    """
+    The lab names (casefolded) whose Seed Bank records this member sees: their
+    own labs and the other labs of their chair groups, the Seed Bank's own rule
+    (seed-bank app/records.py ``sees``). None for an administrator: everything.
+    """
+    if identity.is_admin(member):
+        return None
+    import labs_reader
+    seen = set()
+    for lab in labs_reader.labs_of(member):
+        seen.add((lab['lab'] or '').casefold())
+        group = labs_reader.chair_group_of(lab['lab_id'])
+        for mate in labs_reader.labs_in_chair_group(group) if group else []:
+            seen.add((labs_reader.lab_name(mate) or '').casefold())
+    return seen - {''}
+
+
+def seed_stock_search(member: str, query: str = '', limit: int = 30) -> list:
+    """
+    Lines, seed lots and plants matching ``query`` (code, line name), among
+    those the member sees in the Seed Bank: ``[{kind, code, label, lab}]``.
+    The code is what a tag keeps as its ``stock_id``.
+    """
+    conn = _open_ro(_seeds_db_path())
+    if conn is None:
+        return []
+    seen = _seed_labs_seen(member)
+    like = f"%{(query or '').strip()}%"
+    found = []
+    try:
+        queries = (
+            ('line', "SELECT l.code, l.name AS label, l.lab FROM lines l "
+                     "WHERE l.deleted_at IS NULL AND (l.code LIKE ? OR l.name LIKE ?) ORDER BY l.code"),
+            ('lot', "SELECT s.code, l.name || ' · seed lot ' || s.code AS label, s.lab FROM lots s "
+                    "JOIN lines l ON l.id = s.line_id "
+                    "WHERE s.deleted_at IS NULL AND (s.code LIKE ? OR l.name LIKE ?) ORDER BY s.code"),
+            ('plant', "SELECT p.code, l.name || ' · plant #' || p.number || ' (' || p.code || ')' AS label, p.lab "
+                      "FROM plants p JOIN lines l ON l.id = p.line_id "
+                      "WHERE p.deleted_at IS NULL AND (p.code LIKE ? OR l.name LIKE ?) ORDER BY p.code"),
+        )
+        for kind, sql in queries:
+            try:
+                rows = conn.execute(sql, (like, like)).fetchall()
+            except sqlite3.Error:
+                continue      # an older Seed Bank without this table or column
+            for r in rows:
+                if seen is None or (r['lab'] or '').casefold() in seen:
+                    found.append({'kind': kind, 'code': r['code'], 'label': r['label'], 'lab': r['lab']})
+    finally:
+        conn.close()
+    return found[:limit]
+
+
 # ---------------------------------------------------------------------------
 # A tolerant existence check over an unknown-but-guessed schema
 # ---------------------------------------------------------------------------
@@ -311,10 +365,11 @@ def _seed_stock_link(stock_kind: str, stock_id: str) -> str:
     Built from ``SEEDS_URL``; the path segment reflects the kind (``lines`` /
     ``lots`` / ``plants``) so the link lands on the right Seed Bank record.
     """
-    base = str(current_app.config.get('SEEDS_URL') or '/seeds')
-    segment = {'line': 'lines', 'lot': 'lots', 'plant': 'plants'}.get(
-        stock_kind, 'stocks')
-    return _join(base, segment, stock_id)
+    from urllib.parse import quote
+    base = str(current_app.config.get('SEEDS_URL') or '/seeds').rstrip('/')
+    # The Seed Bank addresses a record in its page's hash: /seeds/#line=L-0001.
+    kind = stock_kind if stock_kind in ('line', 'lot', 'plant') else 'line'
+    return f"{base}/#{kind}={quote(str(stock_id), safe='-_.')}"
 
 
 def _join(base: str, *parts: str) -> str:
@@ -355,6 +410,12 @@ def register_tags(app: Flask) -> None:
     @app.route('/api/genomes/<target_id>/tags')
     def list_genome_tags(target_id):
         return _list_tags('genome', target_id)
+
+    # GET — Seed Bank lines, lots and plants to tag, as the member sees them -
+    @app.route('/api/seed-stocks')
+    def search_seed_stocks():
+        member = identity.require_member()
+        return jsonify({'stocks': seed_stock_search(member, request.args.get('q', ''))})
 
     # DELETE — remove one tag row -------------------------------------------
     @app.route('/api/tracks/<target_id>/tags/<tag_id>', methods=['DELETE'])

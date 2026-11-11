@@ -491,6 +491,7 @@ def _browser_html(static_prefix: str) -> str:
       <p>Pick a reference genome, the tracks to lay over it, and where to start. The browser
          remembers your view of each genome, so it opens where you left off next time.</p>
     </div>
+    <p class="gb-error" id="choose-note" role="alert" hidden></p>
 
     <aside class="gb-guide" id="intro-guide" hidden aria-labelledby="intro-guide-title">
       <h2 id="intro-guide-title">New to the Genome Browser?</h2>
@@ -541,6 +542,13 @@ def _browser_html(static_prefix: str) -> str:
           <input id="track-search" type="search" autocomplete="off" spellcheck="false"
                  placeholder="Search tracks by name or kind: rnaseq rep2, bigwig, peaks…"
                  aria-label="Search tracks" aria-controls="track-list">
+          <label class="gb-sort">Sort by
+            <select id="track-sort" aria-label="Sort tracks by">
+              <option value="experiment">Experiment</option>
+              <option value="name">Name</option>
+              <option value="newest">Newest first</option>
+            </select>
+          </label>
           <span class="gb-hint" id="track-search-count" aria-live="polite"></span>
           <button type="button" class="gb-link" id="tracks-shown" hidden>Tick shown</button>
         </div>
@@ -796,6 +804,36 @@ def _browser_html(static_prefix: str) -> str:
     </form>
   </dialog>
 
+  <dialog id="detail-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="detail-title">
+    <form method="dialog" id="detail-form" novalidate>
+      <h2 id="detail-title">Track</h2>
+      <p class="gb-hint" id="detail-intro"></p>
+      <h3 class="gb-share-h">Experiment</h3>
+      <div class="gb-share-add-row">
+        <input id="detail-experiment" list="experiment-names" maxlength="120" autocomplete="off"
+               aria-label="Experiment" placeholder="No experiment">
+        <button type="button" class="tt-btn primary" id="detail-experiment-save">Save</button>
+      </div>
+      <h3 class="gb-share-h">Plants, lines and seed lots</h3>
+      <ul class="gb-share-list" id="detail-tags"></ul>
+      <div id="detail-tag-add">
+        <div class="gb-share-add-row">
+          <input id="detail-stock-search" type="search" autocomplete="off"
+                 aria-label="Find a line, seed lot or plant in the Seed Bank"
+                 placeholder="Find a line, seed lot or plant: code or line name">
+        </div>
+        <ul class="gb-share-list" id="detail-stock-results"></ul>
+      </div>
+      <h3 class="gb-share-h">In the Lab Notebook</h3>
+      <ul class="gb-share-list" id="detail-mentions"></ul>
+      <p class="gb-hint">Type <b>@</b> in a notebook page and choose <i>A genome track</i> to link it there.</p>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" id="detail-close">Close</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="analyse-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="analyse-dialog-title">
     <form method="dialog" id="analyse-form" novalidate>
       <h2 id="analyse-dialog-title">Analyse</h2>
@@ -1010,6 +1048,12 @@ def _browser_html(static_prefix: str) -> str:
           against the genome's, and ones written another way (1, chr1, Chr1) are renamed to match.
           <a href="{prefix}/help#track" target="_blank" rel="noopener">More on tracks</a></p>
       </div>
+      <label class="gb-field" id="track-experiment-row">Experiment <span class="gb-hint">(optional, for every file
+        added now: the track list groups tracks by it)</span>
+        <input id="track-experiment" list="experiment-names" maxlength="120" autocomplete="off"
+               placeholder="Heat stress RNA-seq 2026">
+      </label>
+      <datalist id="experiment-names"></datalist>
       <ul class="gb-uploads" id="track-rows" aria-live="polite"></ul>
       <p class="gb-upload-summary" id="track-summary" role="status" hidden></p>
       <div class="gb-error" role="alert" hidden></div>

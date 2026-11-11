@@ -341,3 +341,13 @@ kbd { font-family: var(--tt-mono); font-size: .8em; padding: .05rem .35rem; bord
 .gb-analyse-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .gb-figure-downloads { display: inline-flex; flex-wrap: wrap; gap: .1rem .8rem; align-items: center; font-size: .85rem; }
 .gb-figure-downloads:not(:empty)::before { content: 'Data:'; color: var(--tt-muted, #666); }
+
+/* Tracks grouped by experiment, and the sort control beside the search */
+.gb-sort { display: inline-flex; align-items: center; gap: .35rem; color: var(--tt-muted); font-size: .88rem; white-space: nowrap; }
+.gb-exp-head { display: flex; align-items: baseline; gap: .6rem; list-style: none; margin: .9rem 0 .2rem;
+    padding-bottom: .2rem; border-bottom: 1px solid var(--tt-border); }
+.gb-exp-head:first-child { margin-top: .2rem; }
+.gb-exp-name { font-weight: 700; color: var(--tt-green-ink); }
+.gb-exp-head .gb-link { margin-left: auto; font-size: .85rem; }
+#track-experiment-row { display: block; margin: .6rem 0; }
+#track-experiment-row input { display: block; width: 100%; margin-top: .25rem; }

@@ -9,6 +9,24 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-11
+
+### Added
+- **Experiments.** A track belongs to an experiment, named when the files are added (one name for every file
+  added then) or later in its Details. The track list groups tracks under their experiment, with **Tick these**
+  for each; **Sort by** also offers name or newest first, kept per browser. The search finds a track by its
+  experiment too, and tracks open top to bottom in the list's order.
+- **A track's Details**: its experiment; the **Seed Bank** lines, seed lots and plants it is tagged with, and a
+  search to tag more (among the records the member sees in the Seed Bank: their labs' and their chair group's);
+  and the **Lab Notebook** pages that link to it. Only the track's own lab (or an administrator) changes them.
+- **Links from the Lab Notebook.** `GET /api/tracks?q=` finds tracks across every genome the member sees, which the
+  notebook's `@` offers as *A genome track*; `/genome/?track=<id>` opens the track's genome as the member last had
+  it, with that track on.
+
+### Fixed
+- A seed stock tag's link opens its record in the Seed Bank (`/seeds/#line=…`); it pointed at a page the Seed Bank
+  does not have.
+
 ## [0.8.1] - 2026-11-08
 
 ### Fixed

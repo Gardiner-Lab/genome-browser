@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   file_path     TEXT,                      -- stored BigWig/feature file; NULL until ready
   created_by    TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  chrom_check   TEXT                       -- JSON: chromosome names renamed / not in the genome
+  chrom_check   TEXT,                      -- JSON: chromosome names renamed / not in the genome
+  experiment    TEXT                       -- the experiment it belongs to, to group the track list by
 );
 
 -- Per-track sharing: specific labs OR the owner lab's chair group (Req 7)

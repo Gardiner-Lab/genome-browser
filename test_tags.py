@@ -163,7 +163,7 @@ def test_seed_line_tag_records_kind_and_lists_with_link(seeded, monkeypatch):
         headers={'X-Suite-User': 'alice'}).get_json()
     assert len(listed['seed_stock_tags']) == 1
     tag = listed['seed_stock_tags'][0]
-    assert 'Line-42' in tag['link'] and 'lines' in tag['link']
+    assert tag['link'].endswith('#line=Line-42')   # the Seed Bank's own address for a line
 
 
 # ---------------------------------------------------------------------------

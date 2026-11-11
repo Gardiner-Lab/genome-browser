@@ -241,7 +241,8 @@
     }
 
     function trackText(t) {
-        return (t.name + ' ' + trackKind(t.type) + ' ' + t.type + (t.visibility === 'suite' ? ' shared everyone' : '')).toLowerCase();
+        return (t.name + ' ' + trackKind(t.type) + ' ' + t.type + ' ' + (t.experiment || '')
+            + (t.visibility === 'suite' ? ' shared everyone' : '')).toLowerCase();
     }
 
     function trackMatches(t, words) {
@@ -276,10 +277,69 @@
         return nodes;
     }
 
+    // ------------------------------------------------------------------
+    // Sorting: by experiment (grouped under headings), name, or newest first.
+    // The list's order is also the order tracks open in, top to bottom.
+    // ------------------------------------------------------------------
+
+    function trackSort() {
+        try { return localStorage.getItem('gb-track-sort') || 'experiment'; } catch (e) { return 'experiment'; }
+    }
+
+    function byName(a, b) { return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }); }
+
+    function sortedTracks(list) {
+        var mode = trackSort();
+        var out = list.slice();
+        if (mode === 'newest') {
+            out.sort(function (a, b) { return String(b.created_at || '').localeCompare(String(a.created_at || '')) || byName(a, b); });
+        } else if (mode === 'experiment') {
+            // Named experiments first, A to Z; tracks in none last.
+            out.sort(function (a, b) {
+                var x = a.experiment || '', y = b.experiment || '';
+                if (!x !== !y) { return x ? -1 : 1; }
+                return x.localeCompare(y, undefined, { sensitivity: 'base', numeric: true }) || byName(a, b);
+            });
+        } else {
+            out.sort(byName);
+        }
+        return out;
+    }
+
+    function experimentNames() {
+        var seen = {};
+        state.tracks.forEach(function (t) { if (t.experiment) { seen[t.experiment] = true; } });
+        return Object.keys(seen).sort(function (a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); });
+    }
+
+    function fillExperimentNames() {
+        var list = el('experiment-names');
+        if (!list) { return; }
+        list.replaceChildren.apply(list, experimentNames().map(function (n) { return make('option', { value: n }); }));
+    }
+
+    function experimentHeading(name, tracks) {
+        return make('li', { class: 'gb-exp-head' }, [
+            make('span', { class: 'gb-exp-name', text: name || 'No experiment' }),
+            make('span', { class: 'gb-hint', text: tracks.length + ' track' + (tracks.length === 1 ? '' : 's') }),
+            make('button', {
+                type: 'button', class: 'gb-link', text: 'Tick these',
+                title: 'Tick every track ' + (name ? 'in “' + name + '”' : 'in no experiment'),
+                onclick: function () {
+                    tracks.forEach(function (t) { state.selected.add(t.id); });
+                    renderTracks();
+                    updateOpenHint();
+                }
+            })
+        ]);
+    }
+
     function renderTracks() {
         var list = el('track-list');
         var words = searchWords(state.trackQuery);
-        var shown = state.tracks.filter(function (t) { return trackMatches(t, words); });
+        var shown = sortedTracks(state.tracks.filter(function (t) { return trackMatches(t, words); }));
+        var grouping = trackSort() === 'experiment' && shown.some(function (t) { return t.experiment; });
+        fillExperimentNames();
         var rows = [];
         if (!words.length) {
             rows.push(make('li', { class: 'gb-sequence-row' }, [
@@ -295,7 +355,12 @@
         } else if (!shown.length) {
             rows.push(make('li', { class: 'gb-no-match', text: 'No track on this genome matches “' + state.trackQuery.trim() + '”.' }));
         }
+        var lastGroup = null;
         shown.forEach(function (t) {
+            if (grouping && (t.experiment || '') !== lastGroup) {
+                lastGroup = t.experiment || '';
+                rows.push(experimentHeading(t.experiment, shown.filter(function (u) { return (u.experiment || '') === lastGroup; })));
+            }
             var box = make('input', { type: 'checkbox', value: t.id });
             box.checked = state.selected.has(t.id);
             box.addEventListener('change', function () {
@@ -304,7 +369,8 @@
             });
             var kind = trackKind(t.type) + (t.visibility === 'suite' ? ' · shared with everyone'
                 : t.visibility === 'labs' ? ' · shared with other labs'
-                : t.visibility === 'chair_group' ? ' · shared with the chair group' : '');
+                : t.visibility === 'chair_group' ? ' · shared with the chair group' : '')
+                + (!grouping && t.experiment ? ' · ' + t.experiment : '');
             rows.push(make('li', { class: 'gb-track-row' }, [
                 make('label', { class: 'gb-track' }, [
                     box,
@@ -313,6 +379,11 @@
                         make('span', { class: 'gb-track-kind', text: kind })
                     ])
                 ]),
+                make('button', {
+                    type: 'button', class: 'gb-link gb-track-share', text: 'Details',
+                    title: 'The experiment, plants and notebook pages of “' + t.name + '”',
+                    onclick: function () { openDetails(t); }
+                }),
                 make('button', {
                     type: 'button', class: 'gb-link gb-track-share', text: 'Share',
                     title: 'See and change which labs see “' + t.name + '”',
@@ -434,7 +505,7 @@
             el('locus').focus();
             return;
         }
-        var order = state.tracks.map(function (t) { return t.id; }).filter(function (id) { return state.selected.has(id); });
+        var order = sortedTracks(state.tracks).map(function (t) { return t.id; }).filter(function (id) { return state.selected.has(id); });
         history.pushState({ genome: state.genome.id }, '', PREFIX + '/?genome=' + encodeURIComponent(state.genome.id));
         // Save first, so the view reopens the same way and the URL is enough;
         // each track's settings (height, colour...) are kept as they were.
@@ -1200,6 +1271,7 @@
         var name = row.name.value.trim() || defaultTrackName(row.file.name);
         var data = new FormData();
         data.append('name', name);
+        data.append('experiment', (el('track-experiment').value || '').trim());
         data.append('file', row.file);
         row.bar.value = 0;
         setRow(row, 'uploading', []);
@@ -2654,6 +2726,139 @@
         return state.labs;
     }
 
+    // ------------------------------------------------------------------
+    // A track's details: its experiment, the Seed Bank plants it is tagged
+    // with, and the Lab Notebook pages that link to it.
+    // ------------------------------------------------------------------
+
+    function sendJSON(method, url, body) {
+        return fetch(url, {
+            method: method, credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body)
+        }).then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (data) {
+                if (!r.ok) { throw new Error((data && data.error) || ('HTTP ' + r.status)); }
+                return data;
+            });
+        });
+    }
+
+    function detailError(text) {
+        var box = el('detail-form').querySelector('.gb-error');
+        box.textContent = text || '';
+        box.hidden = !text;
+    }
+
+    function openDetails(t) {
+        state.detailTrack = t;
+        detailError('');
+        el('detail-title').textContent = t.name;
+        el('detail-intro').textContent = trackKind(t.type) + (t.can_change ? '' : ' · only its own lab changes its experiment and plants');
+        el('detail-experiment').value = t.experiment || '';
+        el('detail-experiment').disabled = !t.can_change;
+        el('detail-experiment-save').hidden = !t.can_change;
+        el('detail-tag-add').hidden = !t.can_change;
+        el('detail-stock-search').value = '';
+        el('detail-stock-results').replaceChildren();
+        el('detail-tags').replaceChildren(make('li', { text: 'Loading…' }));
+        el('detail-mentions').replaceChildren(make('li', { text: NOTEBOOK ? 'Loading…' : 'The Lab Notebook is not part of this suite.' }));
+        fillExperimentNames();
+        el('detail-dialog').showModal();
+        loadDetailTags();
+        loadMentions();
+    }
+
+    function loadDetailTags() {
+        var t = state.detailTrack;
+        getJSON(API + '/tracks/' + encodeURIComponent(t.id) + '/tags').then(function (body) {
+            var tags = body.seed_stock_tags || [];
+            var list = el('detail-tags');
+            if (!tags.length) {
+                list.replaceChildren(make('li', { class: 'gb-hint', text: 'Not tagged with a plant, line or seed lot yet.' }));
+                return;
+            }
+            list.replaceChildren.apply(list, tags.map(function (tag) {
+                var li = make('li', {}, [
+                    make('a', { href: tag.link, target: '_blank', rel: 'noopener', text: tag.stock_id }),
+                    make('span', { class: 'gb-share-why', text: tag.stock_kind === 'lot' ? 'seed lot' : tag.stock_kind })
+                ]);
+                if (t.can_change) {
+                    li.appendChild(make('button', {
+                        type: 'button', class: 'gb-link', text: 'Remove',
+                        onclick: function () {
+                            sendJSON('DELETE', API + '/tracks/' + encodeURIComponent(t.id) + '/tags/' + encodeURIComponent(tag.id))
+                                .then(loadDetailTags).catch(function (err) { detailError(err.message); });
+                        }
+                    }));
+                }
+                return li;
+            }));
+        }).catch(function (err) { detailError('Could not read its tags: ' + err.message); });
+    }
+
+    function searchStocks() {
+        var t = state.detailTrack;
+        var q = el('detail-stock-search').value.trim();
+        var list = el('detail-stock-results');
+        if (!q) { list.replaceChildren(); return; }
+        getJSON(API + '/seed-stocks?q=' + encodeURIComponent(q)).then(function (body) {
+            if (el('detail-stock-search').value.trim() !== q) { return; }   // typed on since
+            var stocks = body.stocks || [];
+            if (!stocks.length) {
+                list.replaceChildren(make('li', { class: 'gb-hint', text: 'Nothing in the Seed Bank you see matches “' + q + '”.' }));
+                return;
+            }
+            list.replaceChildren.apply(list, stocks.map(function (s) {
+                return make('li', {}, [
+                    make('span', { class: 'gb-share-who', text: s.label }),
+                    make('span', { class: 'gb-share-why', text: s.lab || '' }),
+                    make('button', {
+                        type: 'button', class: 'tt-btn', text: 'Tag',
+                        onclick: function () {
+                            postJSON(API + '/tracks/' + encodeURIComponent(t.id) + '/tags', { kind: 'seed_stock', stock_id: s.code })
+                                .then(function () { el('detail-stock-search').value = ''; list.replaceChildren(); loadDetailTags(); })
+                                .catch(function (err) { detailError(err.message); });
+                        }
+                    })
+                ]);
+            }));
+        }).catch(function (err) { detailError('Could not search the Seed Bank: ' + err.message); });
+    }
+
+    function loadMentions() {
+        if (!NOTEBOOK) { return; }
+        var t = state.detailTrack;
+        getJSON(NOTEBOOK + '/api/mentions?type=track&id=' + encodeURIComponent(t.id)).then(function (body) {
+            var notes = body.notes || [];
+            var list = el('detail-mentions');
+            if (!notes.length) {
+                list.replaceChildren(make('li', { class: 'gb-hint', text: 'No notebook page you can open links to it yet.' }));
+                return;
+            }
+            list.replaceChildren.apply(list, notes.map(function (n) {
+                return make('li', {}, [
+                    make('a', { href: NOTEBOOK + '/#note=' + encodeURIComponent(n.id), target: '_blank', rel: 'noopener', text: n.title || 'Untitled' }),
+                    make('span', { class: 'gb-share-why', text: n.owner ? 'by ' + n.owner : '' })
+                ]);
+            }));
+        }).catch(function () {
+            el('detail-mentions').replaceChildren(make('li', { class: 'gb-hint', text: 'The Lab Notebook could not be asked.' }));
+        });
+    }
+
+    function saveExperiment() {
+        var t = state.detailTrack;
+        sendJSON('PATCH', API + '/tracks/' + encodeURIComponent(t.id), { experiment: el('detail-experiment').value })
+            .then(function (body) {
+                t.experiment = body.experiment || null;
+                state.tracks.forEach(function (u) { if (u.id === t.id) { u.experiment = t.experiment; } });
+                el('detail-experiment').value = t.experiment || '';
+                detailError('');
+                renderTracks();
+            }).catch(function (err) { detailError(err.message); });
+    }
+
     // kind is 'genome' or 'track'; item is the genome or track from the lists.
     function openShare(kind, item) {
         state.share = { kind: kind, item: item };
@@ -2804,11 +3009,54 @@
     // ------------------------------------------------------------------
 
     function route() {
-        var genome = new URLSearchParams(location.search).get('genome');
-        if (genome) { openBrowser(genome, null); } else { showChoose(null, true); }
+        var params = new URLSearchParams(location.search);
+        var genome = params.get('genome');
+        var track = params.get('track');
+        if (track && !genome) { openTrack(track); } else if (genome) { openBrowser(genome, null); } else { showChoose(null, true); }
+    }
+
+    // A link to one track (from a notebook page): its genome opens as the
+    // member last had it, with that track on too.
+    function openTrack(trackId) {
+        getJSON(API + '/tracks/' + encodeURIComponent(trackId)).then(function (t) {
+            if (!t.genome_id) { throw new Error('no genome'); }
+            history.replaceState({ genome: t.genome_id }, '', PREFIX + '/?genome=' + encodeURIComponent(t.genome_id));
+            return getJSON(API + '/view?genome_id=' + encodeURIComponent(t.genome_id)).catch(function () { return {}; })
+                .then(function (view) {
+                    view = view || {};
+                    var enabled = (view.enabled || []).filter(function (id) { return id !== t.id; });
+                    enabled.push(t.id);
+                    openBrowser(t.genome_id, { locus: view.locus || '', enabled: enabled, options: view.options || {} });
+                });
+        }).catch(function () {
+            history.replaceState({}, '', PREFIX + '/');
+            showChoose(null, true);
+            var note = el('choose-note');
+            note.textContent = 'That track no longer exists, or it is not shared with you. Ask its lab to share it.';
+            note.hidden = false;
+        });
     }
 
     el('choose-form').addEventListener('submit', function (e) { e.preventDefault(); openFromChoice(); });
+    el('track-sort').value = trackSort();
+    el('track-sort').addEventListener('change', function () {
+        try { localStorage.setItem('gb-track-sort', el('track-sort').value); } catch (e) { /* kept for this page only */ }
+        renderTracks();
+    });
+    el('detail-close').addEventListener('click', function () { el('detail-dialog').close(); });
+    el('detail-experiment-save').addEventListener('click', saveExperiment);
+    el('detail-experiment').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); saveExperiment(); }
+    });
+    var stockTimer = null;
+    el('detail-stock-search').addEventListener('input', function () {
+        clearTimeout(stockTimer);
+        stockTimer = setTimeout(searchStocks, 250);
+    });
+    el('detail-stock-search').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); searchStocks(); }
+    });
+
     el('track-search').addEventListener('input', function () {
         state.trackQuery = el('track-search').value;
         renderTracks();

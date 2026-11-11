@@ -61,7 +61,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from flask import Flask, current_app, jsonify, request, send_file
+from flask import Flask, current_app, has_request_context, jsonify, request, send_file
 
 import access
 import align
@@ -163,6 +163,45 @@ def register_tracks(app: Flask) -> None:
         finally:
             conn.close()
 
+    @app.route('/api/tracks', methods=['GET'])
+    def search_tracks():
+        """
+        Tracks on every genome the member may view, by name, experiment or
+        genome (``?q=``; every word must match): what the Lab Notebook offers
+        to link a page to. ``{"tracks": [{id, name, type, genome_id, genome,
+        experiment}]}``, at most 30, the newest first.
+        """
+        member = identity.require_member()
+        words = (request.args.get('q') or '').lower().split()
+        conn = db.connect(Path(current_app.config['DATA_ROOT']) / 'genome.db')
+        try:
+            rows = conn.execute(
+                'SELECT t.*, g.name AS genome_name, g.owner_lab AS genome_owner_lab, '
+                '       g.genome_visibility AS genome_visibility FROM tracks t '
+                'JOIN reference_genomes g ON g.id = t.genome_id '
+                "WHERE t.track_status = 'ready' ORDER BY t.created_at DESC, t.name COLLATE NOCASE").fetchall()
+            genomes_seen = {}
+            found = []
+            for row in rows:
+                text = ' '.join((row['name'] or '', row['experiment'] or '', row['genome_name'] or '')).lower()
+                if not all(w in text for w in words):
+                    continue
+                if not access.can_view_track(member, row, conn):
+                    continue
+                gid = row['genome_id']
+                if gid not in genomes_seen:
+                    genome = conn.execute('SELECT * FROM reference_genomes WHERE id = ?', (gid,)).fetchone()
+                    genomes_seen[gid] = genome is not None and access.can_view_genome(member, genome, conn)
+                if not genomes_seen[gid]:
+                    continue
+                found.append({'id': row['id'], 'name': row['name'], 'type': row['type'], 'genome_id': gid,
+                              'genome': row['genome_name'], 'experiment': row['experiment']})
+                if len(found) >= 30:
+                    break
+        finally:
+            conn.close()
+        return jsonify({'tracks': found})
+
     @app.route('/api/tracks/<track_id>', methods=['GET'])
     def track_detail(track_id):
         """
@@ -187,6 +226,34 @@ def register_tracks(app: Flask) -> None:
             return jsonify(_track_metadata(track))
         finally:
             conn.close()
+
+    @app.route('/api/tracks/<track_id>', methods=['PATCH'])
+    def update_track(track_id):
+        """
+        Change a track's experiment: ``{"experiment": "Heat stress RNA-seq"}``,
+        or ``null``/blank to take it out of any. The owner lab's members (and
+        administrators) change it; anyone else who sees the track gets 403, and
+        someone who does not, 404.
+        """
+        member = identity.require_member()
+        body = request.get_json(silent=True) or {}
+        if 'experiment' not in body:
+            return jsonify({'error': 'Nothing to change: send "experiment".'}), 400
+        conn = db.connect(Path(current_app.config['DATA_ROOT']) / 'genome.db')
+        try:
+            track = conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
+            if track is None or not (access.can_view_track(member, track, conn)
+                                     or access.is_owner_lab_member(member, track['owner_lab'])):
+                return jsonify({'error': 'Track not found'}), 404
+            if not (access.is_owner_lab_member(member, track['owner_lab']) or identity.is_admin(member)):
+                return jsonify({'error': "Only the track's own lab changes its experiment."}), 403
+            conn.execute('UPDATE tracks SET experiment = ? WHERE id = ?',
+                         (clean_experiment(body.get('experiment')), track_id))
+            conn.commit()
+            track = conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
+        finally:
+            conn.close()
+        return jsonify(_track_metadata(track))
 
     @app.route('/api/tracks/<track_id>/status', methods=['GET'])
     def track_status(track_id):
@@ -772,15 +839,26 @@ def _insert_track(conn, track_id, genome_id, name, track_type, owner_lab,
     inputs). ``chrom_check`` is what the chromosome-name check renamed or left
     unmatched (``chrom_names.NameMatch.report``), kept as JSON.
     """
+    # The experiment, when the upload names one: every format's path ends here.
+    experiment = clean_experiment(request.form.get('experiment')) if has_request_context() else None
     conn.execute(
         'INSERT INTO tracks '
         '(id, genome_id, name, type, owner_lab, visibility, track_status, '
-        ' file_path, created_by, chrom_check) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ' file_path, created_by, chrom_check, experiment) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (track_id, genome_id, name, track_type, owner_lab,
          _initial_visibility(owner_lab),
          track_status, file_path, created_by,
-         json.dumps(chrom_check) if chrom_check else None))
+         json.dumps(chrom_check) if chrom_check else None, experiment))
+
+
+EXPERIMENT_MAX = 120
+
+
+def clean_experiment(text):
+    """An experiment name as kept: trimmed, single-spaced, at most 120 characters; None when blank."""
+    text = re.sub(r'\s+', ' ', str(text or '')).strip()[:EXPERIMENT_MAX]
+    return text or None
 
 
 def _track_body(track_id, name, track_type, owner_lab, chrom_check=None):
@@ -871,6 +949,7 @@ def _track_metadata(track) -> dict:
     """
     return {
         'id': track['id'],
+        'genome_id': track['genome_id'] if 'genome_id' in track.keys() else None,
         'name': track['name'],
         'type': track['type'],
         'owner_lab': track['owner_lab'],
@@ -878,6 +957,8 @@ def _track_metadata(track) -> dict:
         'track_status': track['track_status'],
         'error': track['error'],
         'chrom_check': _chrom_check(track),
+        'experiment': track['experiment'] if 'experiment' in track.keys() else None,
+        'created_at': track['created_at'] if 'created_at' in track.keys() else None,
     }
 
 
