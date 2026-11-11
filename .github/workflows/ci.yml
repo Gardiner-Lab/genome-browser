@@ -15,7 +15,20 @@ jobs:
           python-version: '3.12'
           cache: pip
       # pyBigWig has no wheel and is built from source: it needs these headers.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev
+      # The runners' mirror (azure.archive.ubuntu.com) refuses to resolve now and
+      # then, which failed whole releases, so give it a few goes before believing it.
+      - name: Headers for building pyBigWig
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update -qq \
+               && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev; then
+              exit 0
+            fi
+            echo "apt failed (attempt $attempt); waiting before trying again"
+            sleep $((attempt * 20))
+          done
+          echo "The Ubuntu mirror could not be reached after 5 attempts."
+          exit 1
       - run: pip install -r requirements.txt
       # The application makes its data root when the module is imported, and
       # the default is /genome, the volume it has in the container: without
@@ -31,5 +44,5 @@ jobs:
           docker build -t genome-browser:ci .
           docker run --rm --user 0 -v "$PWD":/src:ro genome-browser:ci sh -c '
             mkdir -p /work && cp -r /src/. /work/ \
-            && apt-get update -qq && apt-get install -y -qq python3-pytest >/dev/null \
+            && (for a in 1 2 3; do apt-get update -qq && apt-get install -y -qq python3-pytest >/dev/null && break || sleep $((a * 20)); done) \
             && cd /work && GENOME_DATA_ROOT=/tmp/genome python3 -m pytest -q test_smoke.py'

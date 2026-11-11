@@ -25,7 +25,20 @@ jobs:
           python-version: '3.12'
           cache: pip
       # pyBigWig has no wheel and is built from source: it needs these headers.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev
+      # The runners' mirror (azure.archive.ubuntu.com) refuses to resolve now and
+      # then, which failed whole releases, so give it a few goes before believing it.
+      - name: Headers for building pyBigWig
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update -qq \
+               && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev; then
+              exit 0
+            fi
+            echo "apt failed (attempt $attempt); waiting before trying again"
+            sleep $((attempt * 20))
+          done
+          echo "The Ubuntu mirror could not be reached after 5 attempts."
+          exit 1
       - run: pip install -r requirements.txt
       # See ci.yml: the data root is made at import time.
       - run: pytest -q
