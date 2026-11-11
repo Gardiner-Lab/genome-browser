@@ -108,6 +108,9 @@ def init_db(path=None) -> None:
 _ADDED_COLUMNS = (
     ('tracks', 'chrom_check', 'TEXT'),
     ('tracks', 'experiment', 'TEXT'),
+    ('tracks', 'citation', 'TEXT'),
+    ('tracks', 'doi', 'TEXT'),
+    ('tracks', 'geo', 'TEXT'),
     ('genome_shares', 'auto', 'INTEGER NOT NULL DEFAULT 0'),
 )
 

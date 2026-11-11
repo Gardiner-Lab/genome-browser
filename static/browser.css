@@ -344,10 +344,35 @@ kbd { font-family: var(--tt-mono); font-size: .8em; padding: .05rem .35rem; bord
 
 /* Tracks grouped by experiment, and the sort control beside the search */
 .gb-sort { display: inline-flex; align-items: center; gap: .35rem; color: var(--tt-muted); font-size: .88rem; white-space: nowrap; }
-.gb-exp-head { display: flex; align-items: baseline; gap: .6rem; list-style: none; margin: .9rem 0 .2rem;
-    padding-bottom: .2rem; border-bottom: 1px solid var(--tt-border); }
-.gb-exp-head:first-child { margin-top: .2rem; }
+/* An experiment's heading is a band in the list, its edges where the rows' are:
+   the name over the tick boxes, "Tick these" over the rows' Details/Share. */
+.gb-tracks li.gb-exp-head { display: flex; align-items: baseline; gap: .6rem; margin: 0;
+    padding: .5rem .8rem .45rem 1rem; background: var(--tt-sunk); }
 .gb-exp-name { font-weight: 700; color: var(--tt-green-ink); }
-.gb-exp-head .gb-link { margin-left: auto; font-size: .85rem; }
+.gb-exp-head .gb-hint { font-size: .82rem; color: var(--tt-muted); }
+.gb-exp-head .gb-link { margin-left: auto; font-size: .82rem; white-space: nowrap; }
+/* The search row's links line up with the list's: same size, same inset. */
+.gb-search { padding-right: .8rem; }
+#tracks-shown { font-size: .82rem; white-space: nowrap; }
 #track-experiment-row { display: block; margin: .6rem 0; }
 #track-experiment-row input { display: block; width: 100%; margin-top: .25rem; }
+
+/* Where a track comes from: its paper and GEO accessions */
+.gb-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .8rem; }
+@media (max-width: 560px) { .gb-field-pair { grid-template-columns: 1fr; } }
+#detail-stock-search { flex: 1 1 100%; min-width: 0; padding: .5rem .65rem; margin-top: .45rem; }
+.gb-detail-save { display: flex; justify-content: flex-end; align-items: center; gap: .8rem; margin: -.3rem 0 .4rem; }
+.gb-detail-facts { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; margin: .4rem 0 .6rem; font-size: .9rem; }
+.gb-detail-facts dt { color: var(--tt-muted); }
+.gb-detail-facts dd { margin: 0; overflow-wrap: anywhere; }
+.gb-detail-facts dd a + a { margin-left: .5rem; }
+.gb-upload-source { margin: 0 0 .8rem; }
+.gb-upload-source summary { cursor: pointer; font-weight: 600; font-size: .9rem; margin-bottom: .6rem; }
+.gb-track-source { color: var(--tt-green-dark); }
+
+/* Removing a track: asked inside the dialog, in the danger colour */
+.tt-btn.danger-quiet { background: none; border-color: transparent; color: var(--tt-danger); margin-right: auto; }
+.tt-btn.danger-quiet:hover { background: var(--tt-danger-soft); }
+.gb-remove { background: var(--tt-danger-soft); border-radius: var(--tt-radius); padding: .7rem .9rem; margin: .8rem 0 0; font-size: .9rem; }
+.gb-remove p { margin: 0 0 .6rem; }
+.gb-remove .gb-dialog-actions { margin: 0; }

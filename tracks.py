@@ -112,6 +112,11 @@ def register_tracks(app: Flask) -> None:
         upload = request.files.get('file')
         if upload is None or not (upload.filename or '').strip():
             return jsonify({'error': 'A track file is required.'}), 400
+        # A malformed DOI or GEO accession is refused before the file is read.
+        try:
+            upload_source(request.form)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
 
         # Detect the format from the filename before reading the (possibly huge)
         # body. An unknown format is rejected with the supported-formats list
@@ -183,7 +188,8 @@ def register_tracks(app: Flask) -> None:
             genomes_seen = {}
             found = []
             for row in rows:
-                text = ' '.join((row['name'] or '', row['experiment'] or '', row['genome_name'] or '')).lower()
+                text = ' '.join((row['name'] or '', row['experiment'] or '', row['genome_name'] or '',
+                                 row['citation'] or '', row['doi'] or '', row['geo'] or '')).lower()
                 if not all(w in text for w in words):
                     continue
                 if not access.can_view_track(member, row, conn):
@@ -195,7 +201,8 @@ def register_tracks(app: Flask) -> None:
                 if not genomes_seen[gid]:
                     continue
                 found.append({'id': row['id'], 'name': row['name'], 'type': row['type'], 'genome_id': gid,
-                              'genome': row['genome_name'], 'experiment': row['experiment']})
+                              'genome': row['genome_name'], 'experiment': row['experiment'],
+                              'citation': row['citation'], 'geo': row['geo']})
                 if len(found) >= 30:
                     break
         finally:
@@ -230,15 +237,23 @@ def register_tracks(app: Flask) -> None:
     @app.route('/api/tracks/<track_id>', methods=['PATCH'])
     def update_track(track_id):
         """
-        Change a track's experiment: ``{"experiment": "Heat stress RNA-seq"}``,
-        or ``null``/blank to take it out of any. The owner lab's members (and
-        administrators) change it; anyone else who sees the track gets 403, and
-        someone who does not, 404.
+        Change a track's experiment and where it comes from, any of
+        ``{"experiment": "Heat stress RNA-seq", "citation": "Stroud et al. (2013)
+        Cell", "doi": "10.1016/j.cell.2012.10.054", "geo": "GSE39901"}``;
+        ``null``/blank clears one. A DOI may be given as its doi.org address; a
+        malformed DOI or GEO accession is refused (400) and nothing changes. The
+        owner lab's members (and administrators) change them; anyone else who
+        sees the track gets 403, and someone who does not, 404.
         """
         member = identity.require_member()
         body = request.get_json(silent=True) or {}
-        if 'experiment' not in body:
-            return jsonify({'error': 'Nothing to change: send "experiment".'}), 400
+        fields = [f for f in TRACK_FIELDS if f in body]
+        if not fields:
+            return jsonify({'error': 'Nothing to change: send experiment, citation, doi or geo.'}), 400
+        try:
+            values = {f: TRACK_FIELDS[f](body.get(f)) for f in fields}
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         conn = db.connect(Path(current_app.config['DATA_ROOT']) / 'genome.db')
         try:
             track = conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
@@ -246,14 +261,44 @@ def register_tracks(app: Flask) -> None:
                                      or access.is_owner_lab_member(member, track['owner_lab'])):
                 return jsonify({'error': 'Track not found'}), 404
             if not (access.is_owner_lab_member(member, track['owner_lab']) or identity.is_admin(member)):
-                return jsonify({'error': "Only the track's own lab changes its experiment."}), 403
-            conn.execute('UPDATE tracks SET experiment = ? WHERE id = ?',
-                         (clean_experiment(body.get('experiment')), track_id))
+                return jsonify({'error': "Only the track's own lab changes its details."}), 403
+            conn.execute('UPDATE tracks SET ' + ', '.join(f'{f} = ?' for f in fields) + ' WHERE id = ?',
+                         [values[f] for f in fields] + [track_id])
             conn.commit()
             track = conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
         finally:
             conn.close()
         return jsonify(_track_metadata(track))
+
+    @app.route('/api/tracks/<track_id>', methods=['DELETE'])
+    def remove_track(track_id):
+        """
+        Remove a track for good: its row (and with it its shares and conversion
+        jobs), its plasmid and Seed Bank tags, and its files. The owner lab's
+        members (and administrators) remove it, whatever its status; anyone else
+        who sees it gets 403, and someone who does not, 404. Notebook pages that
+        link to it keep the link, which then says the track is gone.
+        """
+        member = identity.require_member()
+        data_root = Path(current_app.config['DATA_ROOT'])
+        conn = db.connect(data_root / 'genome.db')
+        try:
+            track = _load_track(conn, track_id)
+            if track is None or not _may_read_metadata(member, track, conn):
+                return jsonify({'error': 'Track not found'}), 404
+            if not (access.is_owner_lab_member(member, track['owner_lab']) or identity.is_admin(member)):
+                return jsonify({'error': "Only the track's own lab removes it."}), 403
+            # A queued conversion's upload goes too; a running one is the worker's to tidy.
+            scratch = [r['input_path'] for r in conn.execute(
+                "SELECT input_path FROM conversion_jobs WHERE track_id = ? AND state != 'running'", (track_id,))]
+            conn.execute("DELETE FROM plasmid_tags WHERE target_type = 'track' AND target_id = ?", (track_id,))
+            conn.execute("DELETE FROM seed_stock_tags WHERE target_type = 'track' AND target_id = ?", (track_id,))
+            conn.execute('DELETE FROM tracks WHERE id = ?', (track_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        remove_track_files(data_root, track_id, track['file_path'], scratch)
+        return jsonify({'removed': track_id, 'name': track['name']})
 
     @app.route('/api/tracks/<track_id>/status', methods=['GET'])
     def track_status(track_id):
@@ -839,26 +884,116 @@ def _insert_track(conn, track_id, genome_id, name, track_type, owner_lab,
     inputs). ``chrom_check`` is what the chromosome-name check renamed or left
     unmatched (``chrom_names.NameMatch.report``), kept as JSON.
     """
-    # The experiment, when the upload names one: every format's path ends here.
-    experiment = clean_experiment(request.form.get('experiment')) if has_request_context() else None
+    # The experiment and source, when the upload names them: every format's path
+    # ends here. A malformed DOI or GEO accession was refused before the file was
+    # read (upload_track), so one that fails here is simply not kept.
+    try:
+        source = upload_source(request.form) if has_request_context() else {}
+    except ValueError:
+        source = {'experiment': clean_experiment(request.form.get('experiment'))}
     conn.execute(
         'INSERT INTO tracks '
         '(id, genome_id, name, type, owner_lab, visibility, track_status, '
-        ' file_path, created_by, chrom_check, experiment) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ' file_path, created_by, chrom_check, experiment, citation, doi, geo) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (track_id, genome_id, name, track_type, owner_lab,
          _initial_visibility(owner_lab),
          track_status, file_path, created_by,
-         json.dumps(chrom_check) if chrom_check else None, experiment))
+         json.dumps(chrom_check) if chrom_check else None,
+         source.get('experiment'), source.get('citation'), source.get('doi'), source.get('geo')))
 
 
 EXPERIMENT_MAX = 120
+
+
+def _inside(root: Path, path: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def remove_track_files(data_root, track_id: str, file_path=None, scratch=()) -> None:
+    """
+    A removed track's files: its folder (the stored file, a converted BigWig and
+    a feature index beside it), its stored file and index if kept elsewhere, and
+    the scratch folders of conversions that never ran. Only ever under the data
+    root; anything already gone is skipped.
+    """
+    root = Path(data_root)
+    folder = root / 'tracks' / str(track_id)
+    if _inside(root / 'tracks', folder) and folder.name == str(track_id):
+        shutil.rmtree(folder, ignore_errors=True)
+    if file_path:
+        for path in (Path(file_path), Path(str(file_path) + '.idx.sqlite')):
+            if _inside(root, path) and path.is_file():
+                path.unlink(missing_ok=True)
+    for item in scratch or ():
+        parent = Path(item).parent
+        if _inside(root / 'scratch', parent) and parent != root / 'scratch':
+            shutil.rmtree(parent, ignore_errors=True)
 
 
 def clean_experiment(text):
     """An experiment name as kept: trimmed, single-spaced, at most 120 characters; None when blank."""
     text = re.sub(r'\s+', ' ', str(text or '')).strip()[:EXPERIMENT_MAX]
     return text or None
+
+
+def clean_citation(text):
+    """A paper as cited, kept like an experiment name but up to 400 characters."""
+    text = re.sub(r'\s+', ' ', str(text or '')).strip()[:400]
+    return text or None
+
+
+_DOI = re.compile(r'^10\.\d{4,9}/\S{1,200}$')
+
+
+def clean_doi(text):
+    """
+    A DOI as kept: ``10.1016/j.cell.2012.10.054``, from that or its address
+    (https://doi.org/..., doi:...). None when blank; ValueError when it is not one.
+    """
+    text = str(text or '').strip()
+    text = re.sub(r'^(https?://(dx\.)?doi\.org/|doi:\s*)', '', text, flags=re.I).strip()
+    if not text:
+        return None
+    if not _DOI.match(text):
+        raise ValueError(f'"{text[:60]}" is not a DOI: one looks like 10.1016/j.cell.2012.10.054.')
+    return text
+
+
+_GEO = re.compile(r'^(GSE|GSM|GPL|GDS)\d{1,9}$')
+
+
+def clean_geo(text):
+    """
+    GEO accessions as kept: upper-case, space-separated, each once, in the order
+    given (series GSE, samples GSM, platforms GPL, datasets GDS). None when
+    blank; ValueError naming the first one that is not an accession.
+    """
+    found = []
+    for word in re.split(r'[\s,;]+', str(text or '').upper()):
+        if not word:
+            continue
+        if not _GEO.match(word):
+            raise ValueError(f'"{word[:30]}" is not a GEO accession: they look like GSE39901 or GSM980986.')
+        if word not in found:
+            found.append(word)
+    if len(found) > 50:
+        raise ValueError('At most 50 GEO accessions per track.')
+    return ' '.join(found) or None
+
+
+# What PATCH /api/tracks/<id> and an upload may set, and how each is cleaned.
+TRACK_FIELDS = {'experiment': clean_experiment, 'citation': clean_citation,
+                'doi': clean_doi, 'geo': clean_geo}
+
+
+def upload_source(form) -> dict:
+    """The experiment and source an upload's form names, cleaned (ValueError when malformed)."""
+    return {f: clean(form.get(f)) for f, clean in TRACK_FIELDS.items()}
 
 
 def _track_body(track_id, name, track_type, owner_lab, chrom_check=None):
@@ -918,10 +1053,7 @@ def _load_genome(conn: sqlite3.Connection, genome_id: str):
 
 def _load_track(conn: sqlite3.Connection, track_id: str):
     """The tracks row for this id, or None when there is none."""
-    return conn.execute(
-        'SELECT id, genome_id, name, type, owner_lab, visibility, '
-        'track_status, error, file_path, chrom_check FROM tracks WHERE id = ?',
-        (track_id,)).fetchone()
+    return conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
 
 
 def _may_read_metadata(member: str, track, conn) -> bool:
@@ -958,6 +1090,9 @@ def _track_metadata(track) -> dict:
         'error': track['error'],
         'chrom_check': _chrom_check(track),
         'experiment': track['experiment'] if 'experiment' in track.keys() else None,
+        'citation': track['citation'] if 'citation' in track.keys() else None,
+        'doi': track['doi'] if 'doi' in track.keys() else None,
+        'geo': track['geo'] if 'geo' in track.keys() else None,
         'created_at': track['created_at'] if 'created_at' in track.keys() else None,
     }
 

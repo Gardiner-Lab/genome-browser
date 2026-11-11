@@ -9,6 +9,26 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-11
+
+### Added
+- **Published data.** A track names the paper it comes from (as cited), its DOI and its GEO accessions (series and
+  samples), set in its Details or, for every file added at once, when adding them. They show to everyone who sees
+  the track, linked to doi.org and to NCBI GEO; the track list shows the GEO series, and both searches (the track
+  list and the Lab Notebook's `@`) find tracks by them. A malformed DOI or accession is refused, naming it.
+- **Removing a track.** Details, Remove track... removes it for good, after asking: its row, file and feature index,
+  shares, plasmid and Seed Bank tags, and a conversion still queued. Only its own lab or an administrator can.
+  `DELETE /api/tracks/<id>`. A conversion that finishes after its track was removed leaves nothing behind.
+- **What a Seed Bank record is tagged on.** `GET /api/seed-stocks/<code>/tagged` lists the tracks and genomes tagged
+  with a line, lot or plant that the asker may open here, which the Seed Bank shows on the record.
+
+### Changed
+- The experiment headings in the track list line up with the rows (the name over the tick boxes, Tick these over
+  Details and Share), and Tick shown with them.
+
+### Fixed
+- A single track's metadata (`GET /api/tracks/<id>`) left out its experiment.
+
 ## [0.9.2] - 2026-11-11
 
 ### Fixed

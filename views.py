@@ -808,12 +808,32 @@ def _browser_html(static_prefix: str) -> str:
     <form method="dialog" id="detail-form" novalidate>
       <h2 id="detail-title">Track</h2>
       <p class="gb-hint" id="detail-intro"></p>
-      <h3 class="gb-share-h">Experiment</h3>
-      <div class="gb-share-add-row">
-        <input id="detail-experiment" list="experiment-names" maxlength="120" autocomplete="off"
-               aria-label="Experiment" placeholder="No experiment">
-        <button type="button" class="tt-btn primary" id="detail-experiment-save">Save</button>
+      <div id="detail-edit">
+        <label class="gb-field">Experiment
+          <input id="detail-experiment" list="experiment-names" maxlength="120" autocomplete="off"
+                 placeholder="No experiment">
+        </label>
+        <h3 class="gb-share-h">Published in</h3>
+        <label class="gb-field"><span>Paper <span class="gb-hint">· as you would cite it</span></span>
+          <input id="detail-citation" maxlength="400" autocomplete="off"
+                 placeholder="Stroud et al. (2013) Cell 152:352-364">
+        </label>
+        <div class="gb-field-pair">
+          <label class="gb-field">DOI
+            <input id="detail-doi" maxlength="220" autocomplete="off" spellcheck="false"
+                   placeholder="10.1016/j.cell.2012.10.054">
+          </label>
+          <label class="gb-field"><span>GEO accessions <span class="gb-hint">· series, samples</span></span>
+            <input id="detail-geo" maxlength="600" autocomplete="off" spellcheck="false"
+                   placeholder="GSE39901 GSM980986">
+          </label>
+        </div>
+        <div class="gb-detail-save">
+          <span class="gb-hint" id="detail-saved" aria-live="polite"></span>
+          <button type="button" class="tt-btn primary" id="detail-save">Save</button>
+        </div>
       </div>
+      <dl class="gb-detail-facts" id="detail-facts" hidden></dl>
       <h3 class="gb-share-h">Plants, lines and seed lots</h3>
       <ul class="gb-share-list" id="detail-tags"></ul>
       <div id="detail-tag-add">
@@ -827,8 +847,18 @@ def _browser_html(static_prefix: str) -> str:
       <h3 class="gb-share-h">In the Lab Notebook</h3>
       <ul class="gb-share-list" id="detail-mentions"></ul>
       <p class="gb-hint">Type <b>@</b> in a notebook page and choose <i>A genome track</i> to link it there.</p>
+      <div class="gb-remove" id="detail-remove-confirm" hidden>
+        <p><b>Remove “<span id="detail-remove-name"></span>” for good?</b> Its file, its tags and its sharing go,
+           for everyone who sees it. This cannot be undone: the suite's backups do not keep track files.
+           Notebook pages that link to it keep the link, which then says the track is gone.</p>
+        <div class="gb-dialog-actions">
+          <button type="button" class="tt-btn" id="detail-remove-cancel">Keep it</button>
+          <button type="button" class="tt-btn danger" id="detail-remove-yes">Remove the track</button>
+        </div>
+      </div>
       <div class="gb-error" role="alert" hidden></div>
       <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn danger-quiet" id="detail-remove">Remove track…</button>
         <button type="button" class="tt-btn" id="detail-close">Close</button>
       </div>
     </form>
@@ -1053,6 +1083,20 @@ def _browser_html(static_prefix: str) -> str:
         <input id="track-experiment" list="experiment-names" maxlength="120" autocomplete="off"
                placeholder="Heat stress RNA-seq 2026">
       </label>
+      <details class="gb-upload-source" id="track-source">
+        <summary>From a paper or GEO? <span class="gb-hint">(optional, for every file added now)</span></summary>
+        <label class="gb-field"><span>Paper <span class="gb-hint">· as you would cite it</span></span>
+          <input id="track-citation" maxlength="400" autocomplete="off" placeholder="Stroud et al. (2013) Cell 152:352-364">
+        </label>
+        <div class="gb-field-pair">
+          <label class="gb-field">DOI
+            <input id="track-doi" maxlength="220" autocomplete="off" spellcheck="false" placeholder="10.1016/j.cell.2012.10.054">
+          </label>
+          <label class="gb-field">GEO accessions
+            <input id="track-geo" maxlength="600" autocomplete="off" spellcheck="false" placeholder="GSE39901 GSM980986">
+          </label>
+        </div>
+      </details>
       <datalist id="experiment-names"></datalist>
       <ul class="gb-uploads" id="track-rows" aria-live="polite"></ul>
       <p class="gb-upload-summary" id="track-summary" role="status" hidden></p>

@@ -242,6 +242,7 @@
 
     function trackText(t) {
         return (t.name + ' ' + trackKind(t.type) + ' ' + t.type + ' ' + (t.experiment || '')
+            + ' ' + (t.citation || '') + ' ' + (t.doi || '') + ' ' + (t.geo || '')
             + (t.visibility === 'suite' ? ' shared everyone' : '')).toLowerCase();
     }
 
@@ -304,6 +305,16 @@
             out.sort(byName);
         }
         return out;
+    }
+
+    // Where a track comes from, for its row: its first GEO accession, else that it is published.
+    function trackSource(t) {
+        if (t.geo) { return ' · ' + t.geo.split(' ')[0] + (t.geo.indexOf(' ') > 0 ? ' …' : ''); }
+        return t.citation || t.doi ? ' · published' : '';
+    }
+
+    function geoLink(acc) {
+        return 'https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=' + encodeURIComponent(acc);
     }
 
     function experimentNames() {
@@ -370,7 +381,8 @@
             var kind = trackKind(t.type) + (t.visibility === 'suite' ? ' · shared with everyone'
                 : t.visibility === 'labs' ? ' · shared with other labs'
                 : t.visibility === 'chair_group' ? ' · shared with the chair group' : '')
-                + (!grouping && t.experiment ? ' · ' + t.experiment : '');
+                + (!grouping && t.experiment ? ' · ' + t.experiment : '')
+                + trackSource(t);
             rows.push(make('li', { class: 'gb-track-row' }, [
                 make('label', { class: 'gb-track' }, [
                     box,
@@ -1272,6 +1284,9 @@
         var data = new FormData();
         data.append('name', name);
         data.append('experiment', (el('track-experiment').value || '').trim());
+        data.append('citation', (el('track-citation').value || '').trim());
+        data.append('doi', (el('track-doi').value || '').trim());
+        data.append('geo', (el('track-geo').value || '').trim());
         data.append('file', row.file);
         row.bar.value = 0;
         setRow(row, 'uploading', []);
@@ -2754,11 +2769,17 @@
         state.detailTrack = t;
         detailError('');
         el('detail-title').textContent = t.name;
-        el('detail-intro').textContent = trackKind(t.type) + (t.can_change ? '' : ' · only its own lab changes its experiment and plants');
+        el('detail-intro').textContent = trackKind(t.type) + (t.can_change ? '' : ' · only its own lab changes these details');
         el('detail-experiment').value = t.experiment || '';
-        el('detail-experiment').disabled = !t.can_change;
-        el('detail-experiment-save').hidden = !t.can_change;
+        el('detail-citation').value = t.citation || '';
+        el('detail-doi').value = t.doi || '';
+        el('detail-geo').value = t.geo || '';
+        el('detail-saved').textContent = '';
+        el('detail-edit').hidden = !t.can_change;
+        renderFacts(t);
         el('detail-tag-add').hidden = !t.can_change;
+        el('detail-remove').hidden = !t.can_change;
+        el('detail-remove-confirm').hidden = true;
         el('detail-stock-search').value = '';
         el('detail-stock-results').replaceChildren();
         el('detail-tags').replaceChildren(make('li', { text: 'Loading…' }));
@@ -2847,16 +2868,62 @@
         });
     }
 
-    function saveExperiment() {
+    // What a member who cannot change the track sees: its experiment and where it comes from, linked.
+    function renderFacts(t) {
+        var facts = el('detail-facts');
+        var rows = [];
+        if (!t.can_change) {
+            if (t.experiment) { rows.push(['Experiment', [document.createTextNode(t.experiment)]]); }
+            if (t.citation) { rows.push(['Paper', [document.createTextNode(t.citation)]]); }
+            if (t.doi) {
+                rows.push(['DOI', [make('a', { href: 'https://doi.org/' + t.doi, target: '_blank', rel: 'noopener', text: t.doi })]]);
+            }
+            if (t.geo) {
+                rows.push(['GEO', t.geo.split(' ').map(function (acc) {
+                    return make('a', { href: geoLink(acc), target: '_blank', rel: 'noopener', text: acc });
+                })]);
+            }
+        }
+        facts.replaceChildren.apply(facts, [].concat.apply([], rows.map(function (r) {
+            return [make('dt', { text: r[0] }), make('dd', {}, r[1])];
+        })));
+        facts.hidden = !rows.length;
+    }
+
+    var DETAIL_FIELDS = ['experiment', 'citation', 'doi', 'geo'];
+
+    function saveDetails() {
         var t = state.detailTrack;
-        sendJSON('PATCH', API + '/tracks/' + encodeURIComponent(t.id), { experiment: el('detail-experiment').value })
-            .then(function (body) {
-                t.experiment = body.experiment || null;
-                state.tracks.forEach(function (u) { if (u.id === t.id) { u.experiment = t.experiment; } });
-                el('detail-experiment').value = t.experiment || '';
+        var body = {};
+        DETAIL_FIELDS.forEach(function (f) { body[f] = el('detail-' + f).value; });
+        el('detail-saved').textContent = '';
+        sendJSON('PATCH', API + '/tracks/' + encodeURIComponent(t.id), body)
+            .then(function (saved) {
+                DETAIL_FIELDS.forEach(function (f) {
+                    t[f] = saved[f] || null;
+                    el('detail-' + f).value = t[f] || '';
+                });
+                state.tracks.forEach(function (u) {
+                    if (u.id === t.id) { DETAIL_FIELDS.forEach(function (f) { u[f] = t[f]; }); }
+                });
                 detailError('');
+                el('detail-saved').textContent = 'Saved.';
                 renderTracks();
             }).catch(function (err) { detailError(err.message); });
+    }
+
+    function removeTrack() {
+        var t = state.detailTrack;
+        el('detail-remove-yes').disabled = true;
+        sendJSON('DELETE', API + '/tracks/' + encodeURIComponent(t.id)).then(function () {
+            state.tracks = state.tracks.filter(function (u) { return u.id !== t.id; });
+            state.selected.delete(t.id);
+            el('detail-dialog').close();
+            renderTracks();
+            updateOpenHint();
+        }).catch(function (err) {
+            detailError('Could not remove it: ' + err.message);
+        }).then(function () { el('detail-remove-yes').disabled = false; });
     }
 
     // kind is 'genome' or 'track'; item is the genome or track from the lists.
@@ -3044,10 +3111,24 @@
         renderTracks();
     });
     el('detail-close').addEventListener('click', function () { el('detail-dialog').close(); });
-    el('detail-experiment-save').addEventListener('click', saveExperiment);
-    el('detail-experiment').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); saveExperiment(); }
+    el('detail-save').addEventListener('click', saveDetails);
+    DETAIL_FIELDS.forEach(function (f) {
+        el('detail-' + f).addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); saveDetails(); }
+        });
+        el('detail-' + f).addEventListener('input', function () { el('detail-saved').textContent = ''; });
     });
+    el('detail-remove').addEventListener('click', function () {
+        el('detail-remove-name').textContent = state.detailTrack.name;
+        el('detail-remove-confirm').hidden = false;
+        el('detail-remove').hidden = true;
+        el('detail-remove-cancel').focus();
+    });
+    el('detail-remove-cancel').addEventListener('click', function () {
+        el('detail-remove-confirm').hidden = true;
+        el('detail-remove').hidden = false;
+    });
+    el('detail-remove-yes').addEventListener('click', removeTrack);
     var stockTimer = null;
     el('detail-stock-search').addEventListener('input', function () {
         clearTimeout(stockTimer);

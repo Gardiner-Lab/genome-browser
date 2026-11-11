@@ -363,6 +363,14 @@ def help_html(static_prefix: str, prefix: str) -> str:
          experiment ticks all of its tracks. A track's <b>Details</b> changes its experiment, tags it with the
          Seed Bank lines, seed lots and plants it comes from, and lists the Lab Notebook pages that link to it.
          Only the track's own lab changes its experiment and tags.</p>
+      <p><b>Published data.</b> A track from a paper says so: in its <b>Details</b> (or, for every file added at once,
+         under <i>From a paper or GEO?</i> when adding them), give the <b>paper</b> as you would cite it, its
+         <b>DOI</b> (<code>10.1016/j.cell.2012.10.054</code>, or its doi.org address) and its <b>GEO accessions</b>
+         (series <code>GSE…</code> and samples <code>GSM…</code>). Everyone who sees the track sees them, linked to
+         the paper and to GEO; the track list shows the GEO series, and the search finds tracks by any of them.</p>
+      <p><b>Removing a track.</b> <b>Details</b>, <b>Remove track…</b> takes it away for good, for everyone: its
+         file, tags and sharing. Only its own lab (or an administrator) can, and it cannot be undone, as the
+         suite's backups do not keep track files. Notebook pages that link to it then say it is gone.</p>
       <p>A refused file doesn't stop the rest. If it fits another of your genomes, its row offers
          <b>Add it to … instead</b>.</p>
       <table class="help-keys">
@@ -531,7 +539,8 @@ def about_html(static_prefix: str, prefix: str, version: str) -> str:
         <li><b>Lab Notebook</b>: <b>Save to notebook</b> saves the view as a page under today, with the picture,
             what it shows, and the SVG to download.</li>
         <li><b>Seed Bank</b>: a track's <b>Details</b> tags it with the lines, seed lots and plants it comes from,
-            found by code or line name; each tag opens its record in the Seed Bank.</li>
+            found by code or line name; each tag opens its record in the Seed Bank, and the record lists the tracks
+            and genomes tagged with it (those you can open here).</li>
         <li><b>Lab Notebook</b> pages link to a track: type <b>@</b> in a page and choose <i>A genome track</i>. The
             link opens the track's genome with it on, and the track's <b>Details</b> lists the pages.</li>
       </ul>

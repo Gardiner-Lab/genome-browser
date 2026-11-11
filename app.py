@@ -37,7 +37,7 @@ from sharing import register_sharing
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.9.2'
+APP_VERSION = '0.10.0'
 
 
 # ---------------------------------------------------------------------------

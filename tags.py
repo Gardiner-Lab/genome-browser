@@ -297,6 +297,51 @@ def seed_stock_search(member: str, query: str = '', limit: int = 30) -> list:
     return found[:limit]
 
 
+def tagged_with_seed_stock(member: str, stock_id: str) -> dict:
+    """
+    The tracks and genomes tagged with one Seed Bank line, lot or plant that
+    this member may open here, for the Seed Bank's record page to list:
+    ``{"tracks": [{id, name, type, genome_id, genome, experiment}],
+    "genomes": [{id, name, assembly_id}]}``. The Genome Browser's own sharing
+    rules decide (``access.can_view_track`` / ``can_view_genome``), so the Seed
+    Bank never has to know them.
+    """
+    stock_id = (stock_id or '').strip()
+    out = {'tracks': [], 'genomes': []}
+    if not stock_id:
+        return out
+    conn = db.connect(Path(current_app.config['DATA_ROOT']) / 'genome.db')
+    try:
+        genomes = {}
+
+        def genome_seen(genome_id):
+            if genome_id not in genomes:
+                row = conn.execute('SELECT * FROM reference_genomes WHERE id = ?', (genome_id,)).fetchone()
+                genomes[genome_id] = row if row is not None and access.can_view_genome(member, row, conn) else None
+            return genomes[genome_id]
+
+        for tag in conn.execute('SELECT target_type, target_id FROM seed_stock_tags WHERE stock_id = ? '
+                                'ORDER BY verified_at DESC LIMIT 200', (stock_id,)).fetchall():
+            if tag['target_type'] == 'track':
+                track = conn.execute('SELECT * FROM tracks WHERE id = ?', (tag['target_id'],)).fetchone()
+                if track is None or not access.can_view_track(member, track, conn):
+                    continue
+                genome = genome_seen(track['genome_id'])
+                if genome is None:
+                    continue
+                out['tracks'].append({'id': track['id'], 'name': track['name'], 'type': track['type'],
+                                      'genome_id': track['genome_id'], 'genome': genome['name'],
+                                      'experiment': track['experiment'] if 'experiment' in track.keys() else None})
+            elif tag['target_type'] == 'genome':
+                genome = genome_seen(tag['target_id'])
+                if genome is not None:
+                    out['genomes'].append({'id': genome['id'], 'name': genome['name'],
+                                           'assembly_id': genome['assembly_id']})
+    finally:
+        conn.close()
+    return out
+
+
 # ---------------------------------------------------------------------------
 # A tolerant existence check over an unknown-but-guessed schema
 # ---------------------------------------------------------------------------
@@ -412,6 +457,12 @@ def register_tags(app: Flask) -> None:
     @app.route('/api/genomes/<target_id>/tags')
     def list_genome_tags(target_id):
         return _list_tags('genome', target_id)
+
+    # GET — what is tagged with one Seed Bank record, as the member sees it --
+    @app.route('/api/seed-stocks/<stock_id>/tagged')
+    def seed_stock_tagged(stock_id):
+        member = identity.require_member()
+        return jsonify(tagged_with_seed_stock(member, stock_id))
 
     # GET — Seed Bank lines, lots and plants to tag, as the member sees them -
     @app.route('/api/seed-stocks')

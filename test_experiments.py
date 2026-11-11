@@ -145,3 +145,96 @@ def test_someone_in_no_lab_finds_their_own_seed_records(seeded):
     # The Seed Bank keeps their records under user:<name>, and shows them those.
     assert tags._seed_labs_seen('carol') == {'user:carol'}
     assert 'lab a' in tags._seed_labs_seen('alice')
+
+
+def test_a_track_names_the_paper_and_geo_data_it_comes_from(seeded):
+    c = seeded['client']
+    r = c.patch(f"/api/tracks/{seeded['own']}", headers=who('alice'), json={
+        'citation': 'Stroud et al. (2013)  Cell', 'doi': 'https://doi.org/10.1016/j.cell.2012.10.054',
+        'geo': 'gse39901, gsm980986 GSE39901'})
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body['citation'] == 'Stroud et al. (2013) Cell'
+    assert body['doi'] == '10.1016/j.cell.2012.10.054'          # kept without its address
+    assert body['geo'] == 'GSE39901 GSM980986'                  # upper-case, each once
+    listed = {t['id']: t for t in c.get(f"/api/genomes/{seeded['genome_id']}/tracks", headers=who('alice')).get_json()}
+    assert listed[seeded['own']]['geo'] == 'GSE39901 GSM980986'
+    # The notebook's search finds it by its GEO series.
+    assert [t['id'] for t in c.get('/api/tracks?q=gse39901', headers=who('alice')).get_json()['tracks']] == [seeded['own']]
+    # Only what is sent changes; the experiment is left alone.
+    c.patch(f"/api/tracks/{seeded['own']}", headers=who('alice'), json={'experiment': 'Methylomes'})
+    again = c.get(f"/api/tracks/{seeded['own']}", headers=who('alice')).get_json()
+    assert again['experiment'] == 'Methylomes' and again['doi'] == '10.1016/j.cell.2012.10.054'
+
+
+def test_a_malformed_doi_or_geo_accession_is_refused(seeded):
+    c = seeded['client']
+    for body in ({'doi': 'not a doi'}, {'geo': 'GSE39901 SRR12345'}):
+        r = c.patch(f"/api/tracks/{seeded['own']}", headers=who('alice'), json=body)
+        assert r.status_code == 400 and r.get_json()['error']
+    assert c.get(f"/api/tracks/{seeded['own']}", headers=who('alice')).get_json()['geo'] is None
+    # An upload with a malformed one is refused before its file is read.
+    import io
+    r = c.post(f"/api/genomes/{seeded['genome_id']}/tracks", headers=who('alice'), content_type='multipart/form-data',
+               data={'name': 'x', 'geo': 'GEO123', 'file': (io.BytesIO(b'Chr1\t1\t2\n'), 'x.bed')})
+    assert r.status_code == 400 and 'GEO' in r.get_json()['error']
+
+
+def test_the_owner_lab_removes_a_track_and_everything_of_it(seeded):
+    c, root = seeded['client'], seeded['data_root']
+    folder = root / 'tracks' / seeded['own']
+    folder.mkdir(parents=True)
+    (folder / 'cov.bw').write_bytes(b'x')
+    conn = db.connect(root / 'genome.db')
+    try:
+        conn.execute("UPDATE tracks SET file_path = ? WHERE id = ?", (str(folder / 'cov.bw'), seeded['own']))
+        conn.execute("INSERT INTO seed_stock_tags (id, target_type, target_id, stock_kind, stock_id, created_by) "
+                     "VALUES ('t1', 'track', ?, 'line', 'GL-L-0001', 'alice')", (seeded['own'],))
+        conn.execute("INSERT INTO track_shares (track_id, target_type, target_id, granted_by) "
+                     "VALUES (?, 'lab', 'labB', 'alice')", (seeded['own'],))
+        conn.commit()
+    finally:
+        conn.close()
+    # Bob sees it now (shared with his lab) but may not remove it.
+    assert c.delete(f"/api/tracks/{seeded['own']}", headers=who('bob')).status_code == 403
+    r = c.delete(f"/api/tracks/{seeded['own']}", headers=who('alice'))
+    assert r.status_code == 200 and r.get_json()['removed'] == seeded['own']
+    assert not folder.exists()
+    conn = db.connect(root / 'genome.db')
+    try:
+        for sql in ('SELECT 1 FROM tracks WHERE id = ?', 'SELECT 1 FROM track_shares WHERE track_id = ?',
+                    "SELECT 1 FROM seed_stock_tags WHERE target_id = ?"):
+            assert conn.execute(sql, (seeded['own'],)).fetchone() is None, sql
+    finally:
+        conn.close()
+    assert c.get(f"/api/tracks/{seeded['own']}", headers=who('alice')).status_code == 404
+    assert c.delete(f"/api/tracks/{seeded['own']}", headers=who('alice')).status_code == 404
+
+
+def test_removing_never_reaches_outside_the_data_root(tmp_path):
+    outside = tmp_path / 'elsewhere.bw'
+    outside.write_bytes(b'x')
+    root = tmp_path / 'data'
+    (root / 'tracks').mkdir(parents=True)
+    tracks.remove_track_files(root, '../..', str(outside), [str(tmp_path / 'x' / 'in.bam')])
+    assert outside.exists() and root.exists()
+
+
+def test_the_seed_bank_asks_what_is_tagged_with_one_of_its_records(seeded):
+    c = seeded['client']
+    conn = db.connect(seeded['data_root'] / 'genome.db')
+    try:
+        for tid, target_type, target in (('t1', 'track', seeded['own']), ('t2', 'track', seeded['suite']),
+                                         ('t3', 'genome', seeded['genome_id'])):
+            conn.execute("INSERT INTO seed_stock_tags (id, target_type, target_id, stock_kind, stock_id, created_by) "
+                         "VALUES (?, ?, ?, 'line', 'GL-L-0001', 'alice')", (tid, target_type, target))
+        conn.commit()
+    finally:
+        conn.close()
+    seen = c.get('/api/seed-stocks/GL-L-0001/tagged', headers=who('alice')).get_json()
+    assert {t['id'] for t in seen['tracks']} == {seeded['own'], seeded['suite']}
+    assert seen['tracks'][0]['genome'] == 'G' and [g['id'] for g in seen['genomes']] == [seeded['genome_id']]
+    # Bob sees only the track shared with everyone (and the genome everyone sees).
+    bob = c.get('/api/seed-stocks/GL-L-0001/tagged', headers=who('bob')).get_json()
+    assert [t['id'] for t in bob['tracks']] == [seeded['suite']]
+    assert c.get('/api/seed-stocks/GL-L-9999/tagged', headers=who('alice')).get_json() == {'tracks': [], 'genomes': []}

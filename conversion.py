@@ -612,13 +612,16 @@ def _mark_ready(db_path, track_id: str, file_path: str) -> None:
     """
     conn = db.connect(db_path)
     try:
-        conn.execute(
+        changed = conn.execute(
             "UPDATE tracks SET track_status = 'ready', file_path = ?, "
             "error = NULL WHERE id = ?",
-            (file_path, track_id))
+            (file_path, track_id)).rowcount
         conn.commit()
     finally:
         conn.close()
+    if not changed:
+        # Removed while it was converting: the BigWig just stored has no track.
+        shutil.rmtree(Path(file_path).parent, ignore_errors=True)
 
 
 def _mark_failed(db_path, track_id: str, error: str) -> None:

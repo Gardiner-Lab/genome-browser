@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS tracks (
   created_by    TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   chrom_check   TEXT,                      -- JSON: chromosome names renamed / not in the genome
-  experiment    TEXT                       -- the experiment it belongs to, to group the track list by
+  experiment    TEXT,                      -- the experiment it belongs to, to group the track list by
+  citation      TEXT,                      -- the paper it comes from, as cited: Stroud et al. (2013) Cell 152:352
+  doi           TEXT,                      -- that paper's DOI: 10.1016/j.cell.2012.10.054
+  geo           TEXT                       -- its GEO accessions, space-separated: GSE39901 GSM980986
 );
 
 -- Per-track sharing: specific labs OR the owner lab's chair group (Req 7)
