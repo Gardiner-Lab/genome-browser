@@ -29,16 +29,19 @@ jobs:
       # then, which failed whole releases, so give it a few goes before believing it.
       - name: Headers for building pyBigWig
         run: |
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3; do
             if sudo apt-get update -qq \
                && sudo apt-get install -y -qq zlib1g-dev libcurl4-openssl-dev libssl-dev; then
               exit 0
             fi
             echo "apt failed (attempt $attempt); waiting before trying again"
-            sleep $((attempt * 20))
+            sleep $((attempt * 15))
           done
-          echo "The Ubuntu mirror could not be reached after 5 attempts."
-          exit 1
+          # Best-effort on purpose. The runner image usually carries these headers already, and
+          # the mirror (azure.archive.ubuntu.com) drops out for long stretches; failing here
+          # blocked releases of code that builds perfectly well. If they really are missing,
+          # the pip step below fails on its own, and says which header it wanted.
+          echo "::warning::Could not reach the Ubuntu mirror; carrying on with the headers the runner has."
       - run: pip install -r requirements.txt
       # See ci.yml: the data root is made at import time.
       - run: pytest -q
