@@ -535,6 +535,7 @@ def _browser_html(static_prefix: str) -> str:
               <button type="button" class="gb-link" id="tracks-all">Select all</button>
               <button type="button" class="gb-link" id="tracks-none">Select none</button>
             </span>
+            <button type="button" class="tt-btn" id="mark-sequence">+ Mark a sequence</button>
             <button type="button" class="tt-btn" id="add-track">+ Add tracks</button>
           </span>
         </div>
@@ -1060,6 +1061,47 @@ def _browser_html(static_prefix: str) -> str:
         <span class="gb-spacer"></span>
         <button type="button" class="tt-btn" id="figure-close">Close</button>
         <button type="submit" class="tt-btn primary" id="figure-save">Save to Lab Notebook</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="motif-dialog" class="gb-dialog gb-dialog-wide" aria-labelledby="motif-dialog-title">
+    <form method="dialog" id="motif-form" novalidate>
+      <h2 id="motif-dialog-title">Mark a sequence</h2>
+      <p class="gb-hint">On <strong id="motif-genome-name"></strong>. <span id="motif-owner"></span></p>
+      <p class="gb-hint">Looks for the sequence everywhere on the genome, on both strands, and keeps what it
+        finds as a track of its own: a way to show guides, primers and anything else the gene annotation does
+        not name. It finds the sequence exactly as written, so a guide's near-matches are not marked.</p>
+      <label class="gb-field">Track name
+        <input id="motif-name" maxlength="120" autocomplete="off" placeholder="CRISPR guides, HSP101">
+      </label>
+      <label class="gb-field">Sequences <span class="gb-hint">one per line; put a name before it to label
+        it, or leave it bare to use the track's name. IUPAC codes (N, R, Y&hellip;) are allowed.</span>
+        <textarea id="motif-sequences" rows="5" spellcheck="false"
+                  placeholder="sgRNA1  GACGTTAGCACCTGTAGGAT&#10;sgRNA2  TTCGCAAGTGCCATAGGTCA"></textarea>
+      </label>
+      <details class="gb-upload-source" id="motif-source">
+        <summary>From a paper or GEO? <span class="gb-hint">(optional)</span></summary>
+        <label class="gb-field">Experiment
+          <input id="motif-experiment" list="experiment-names" maxlength="120" autocomplete="off">
+        </label>
+        <label class="gb-field"><span>Paper <span class="gb-hint">&middot; as you would cite it</span></span>
+          <input id="motif-citation" maxlength="400" autocomplete="off">
+        </label>
+        <div class="gb-field-pair">
+          <label class="gb-field">DOI
+            <input id="motif-doi" maxlength="220" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="gb-field">GEO accessions
+            <input id="motif-geo" maxlength="600" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+      </details>
+      <p class="gb-upload-summary" id="motif-summary" role="status" hidden></p>
+      <div class="gb-error" role="alert" hidden></div>
+      <div class="gb-dialog-actions">
+        <button type="button" class="tt-btn" id="motif-cancel">Cancel</button>
+        <button type="submit" class="tt-btn primary" id="motif-go">Find and add the track</button>
       </div>
     </form>
   </dialog>

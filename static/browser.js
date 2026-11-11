@@ -2926,6 +2926,71 @@
         }).then(function () { el('detail-remove-yes').disabled = false; });
     }
 
+    // ------------------------------------------------------------------
+    // Marking a sequence on the genome: a guide, a primer or anything else
+    // the annotation does not name, found on both strands and kept as a track.
+    // ------------------------------------------------------------------
+
+    function openMotifDialog() {
+        if (!state.genome) { return; }
+        el('motif-form').querySelector('.gb-error').hidden = true;
+        el('motif-genome-name').textContent = state.genome.name;
+        el('motif-owner').textContent = state.genome.suite && state.me && state.me.is_admin
+            ? 'As an administrator, your tracks on a suite genome are shared with everyone.'
+            : ownerNote();
+        el('motif-summary').hidden = true;
+        el('motif-go').disabled = false;
+        fillExperimentNames();
+        el('motif-dialog').showModal();
+        el('motif-name').focus();
+    }
+
+    function submitMotif(e) {
+        e.preventDefault();
+        var form = el('motif-form');
+        form.querySelector('.gb-error').hidden = true;
+        var name = el('motif-name').value.trim();
+        if (!name) { formError(form, ['Give the track a name.']); el('motif-name').focus(); return; }
+        if (!el('motif-sequences').value.trim()) {
+            formError(form, ['Type at least one sequence to look for.']);
+            el('motif-sequences').focus();
+            return;
+        }
+        el('motif-go').disabled = true;
+        el('motif-summary').hidden = false;
+        el('motif-summary').textContent = 'Looking through the genome…';
+        postJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/tracks/from-sequence', {
+            name: name,
+            sequences: el('motif-sequences').value,
+            experiment: el('motif-experiment').value,
+            citation: el('motif-citation').value,
+            doi: el('motif-doi').value,
+            geo: el('motif-geo').value
+        }).then(function (body) {
+            el('motif-dialog').close();
+            el('motif-sequences').value = '';
+            el('motif-name').value = '';
+            // The new track joins the list, ticked, as an upload's does.
+            return getJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/tracks').then(function (tracks) {
+                state.tracks = tracks;
+                state.selected.add(body.id);
+                renderTracks();
+                updateOpenHint();
+                var per = body.per_sequence || {};
+                var parts = Object.keys(per).map(function (k) { return k + ': ' + per[k]; });
+                el('track-search-count').textContent = 'Marked ' + body.found + ' place'
+                    + (body.found === 1 ? '' : 's') + (parts.length > 1 ? ' (' + parts.join(', ') + ')' : '')
+                    + ((body.capped || []).length
+                        ? ' — ' + body.capped.join(', ') + ' is all over the genome, so only the first of it is marked'
+                        : '');
+            });
+        }).catch(function (err) {
+            el('motif-summary').hidden = true;
+            el('motif-go').disabled = false;
+            formError(form, [err.message]);
+        });
+    }
+
     // kind is 'genome' or 'track'; item is the genome or track from the lists.
     function openShare(kind, item) {
         state.share = { kind: kind, item: item };
@@ -3183,6 +3248,9 @@
 
     el('add-genome').addEventListener('click', openGenomeDialog);
     el('add-track').addEventListener('click', openTrackDialog);
+    el('mark-sequence').addEventListener('click', openMotifDialog);
+    el('motif-cancel').addEventListener('click', function () { el('motif-dialog').close(); });
+    el('motif-form').addEventListener('submit', submitMotif);
     el('genome-form').addEventListener('submit', submitGenome);
     el('track-form').addEventListener('submit', submitTracks);
     el('track-browse').addEventListener('click', function () { el('track-files').click(); });

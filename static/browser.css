@@ -366,6 +366,10 @@ kbd { font-family: var(--tt-mono); font-size: .8em; padding: .05rem .35rem; bord
 .gb-detail-facts dt { color: var(--tt-muted); }
 .gb-detail-facts dd { margin: 0; overflow-wrap: anywhere; }
 .gb-detail-facts dd a + a { margin-left: .5rem; }
+#motif-sequences { width: 100%; font-family: var(--tt-mono); font-size: .86rem; padding: .5rem .65rem;
+    resize: vertical; }
+.gb-motif-found { font-size: .9rem; }
+.gb-motif-found b { color: var(--tt-green-ink); }
 .gb-upload-source { margin: 0 0 .8rem; }
 .gb-upload-source summary { cursor: pointer; font-weight: 600; font-size: .9rem; margin-bottom: .6rem; }
 .gb-track-source { color: var(--tt-green-dark); }

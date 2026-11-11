@@ -371,6 +371,25 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <p><b>Removing a track.</b> <b>Details</b>, <b>Remove track…</b> takes it away for good, for everyone: its
          file, tags and sharing. Only its own lab (or an administrator) can, and it cannot be undone, as the
          suite's backups do not keep track files. Notebook pages that link to it then say it is gone.</p>
+      <h3>Marking a sequence: guides, primers, anything unlabelled</h3>
+      <p><b>+ Mark a sequence</b> looks for a stretch of DNA everywhere on the genome, on both strands, and keeps
+         what it finds as a track of its own. It is the way to show things the gene annotation does not name:
+         CRISPR guides, primer binding sites, an enzyme site, a motif.</p>
+      <ol class="steps">
+        <li><b>Name the track</b> &mdash; <i>CRISPR guides, HSP101</i> &mdash; and type the <b>sequences</b>, one per
+            line. Put a name before a sequence to label it (<code>sgRNA1&nbsp;&nbsp;GACGTTAGCACCTGTAGGAT</code>);
+            a bare sequence takes the track's name. A FASTA <code>&gt;name</code> header works too.</li>
+        <li><b>IUPAC codes</b> are allowed, so a degenerate primer or an enzyme site goes in as written:
+            <code>GGTCTCNNNNN</code>, <code>GGWCC</code>.</li>
+        <li><b>Find and add the track.</b> Each place found becomes a feature, on the strand it reads on, named
+            after its sequence and numbered when there is more than one (<i>sgRNA1.1</i>, <i>sgRNA1.2</i>).</li>
+      </ol>
+      <p>From then on it is an ordinary track: tick it to show it, share it, export it, put it in an experiment
+         or remove it. A sequence found nowhere on the genome makes no track and says so &mdash; usually it is
+         from another assembly, or it has a vector end on it.</p>
+      <p>The search is <b>exact</b>: it finds the sequence as written, so a guide's off-targets with a base or two
+         changed are not marked. A sequence must be at least 8 bases. One that is all over the genome (an enzyme
+         site) stops at 500 places, and the others typed with it are still searched in full.</p>
       <p>A refused file doesn't stop the rest. If it fits another of your genomes, its row offers
          <b>Add it to … instead</b>.</p>
       <table class="help-keys">

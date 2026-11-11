@@ -71,6 +71,7 @@ import db
 import feature_index
 import identity
 import labs_reader
+import motifs
 import readers
 import regions
 import serving
@@ -167,6 +168,90 @@ def register_tracks(app: Flask) -> None:
             }), 400
         finally:
             conn.close()
+
+    @app.route('/api/genomes/<genome_id>/tracks/from-sequence', methods=['POST'])
+    def track_from_sequence(genome_id):
+        """
+        Mark a sequence on the genome: a feature track of everywhere it occurs.
+
+        ``{"name": "CRISPR guides", "sequences": "sgRNA1 GACG...\nsgRNA2 TTCG...",
+        "experiment": "...", ...}``. Each line is one sequence, optionally named;
+        IUPAC codes are allowed. Both strands are searched, and the hits are kept
+        as an ordinary BED track of the member's lab, ready at once. A sequence
+        that is nowhere on the genome makes no track (400), so an empty one is
+        never left behind. This is for guides, primers and anything else the gene
+        annotation does not name.
+        """
+        member = identity.require_member()
+        body = request.get_json(silent=True) or {}
+        name = (body.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'A track name is required.'}), 400
+        try:
+            queries = motifs.parse_queries(str(body.get('sequences') or ''), name)
+            source = {f: clean(body.get(f)) for f, clean in TRACK_FIELDS.items()}
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+
+        data_root = Path(current_app.config['DATA_ROOT'])
+        conn = db.connect(data_root / 'genome.db')
+        try:
+            genome = _load_genome(conn, genome_id)
+            if genome is None or not access.can_view_genome(member, genome, conn):
+                return jsonify({'error': 'Reference genome not found'}), 404
+            if genome['owner_lab'] == access.SUITE_OWNER and identity.is_admin(member):
+                owner_lab = access.SUITE_OWNER
+            else:
+                owner_lab = labs_reader.current_lab(member)
+            if not owner_lab:
+                return jsonify({'error': 'You must belong to a lab to add a track.'}), 400
+            chroms = _chrom_sizes(conn, genome['id'])
+            fasta = serving.reference_path(data_root, genome['id'])
+            if not fasta.exists():
+                return jsonify({'error': "This genome's sequence is not ready yet."}), 503
+            try:
+                hits, capped = motifs.search(fasta, queries, chroms)
+            except OSError as exc:
+                return jsonify({'error': f"The genome's sequence could not be read: {exc}."}), 503
+            if not hits:
+                return jsonify({
+                    'error': 'Not found on this genome, on either strand. Check the sequence, and that '
+                             'it is from this assembly.',
+                    'found': 0}), 400
+
+            hits = motifs.number_hits(hits)
+            track_id = uuid.uuid4().hex
+            scratch_dir = data_root / 'scratch' / f'motif-{track_id}'
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                bed_path = scratch_dir / f'{_safe_name(name, default="sequence")}.bed'
+                bed_path.write_text(motifs.bed_text(hits), encoding='utf-8', newline='')
+                stored_path = _store_file(data_root, track_id, bed_path)
+            finally:
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+            try:
+                feature_index.build(stored_path, regions.feature_parser('bed'))
+            except (OSError, sqlite3.Error):
+                pass                       # the first view builds it instead
+            serving.prepare_feature_track(stored_path, 'bed')
+            conn.execute(
+                'INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, '
+                ' file_path, created_by, experiment, citation, doi, geo) '
+                "VALUES (?, ?, ?, 'bed', ?, ?, 'ready', ?, ?, ?, ?, ?, ?)",
+                (track_id, genome['id'], name, owner_lab, _initial_visibility(owner_lab),
+                 str(stored_path), member, source.get('experiment'), source.get('citation'),
+                 source.get('doi'), source.get('geo')))
+            conn.commit()
+        finally:
+            conn.close()
+        per_sequence = {}
+        for hit in hits:
+            key = hit.name.rsplit('.', 1)[0] if '.' in hit.name else hit.name
+            per_sequence[key] = per_sequence.get(key, 0) + 1
+        return jsonify({**_track_body(track_id, name, 'bed', owner_lab),
+                        'found': len(hits), 'per_sequence': per_sequence,
+                        'capped': capped,
+                        'searched': [q.name for q in queries]}), 201
 
     @app.route('/api/tracks', methods=['GET'])
     def search_tracks():

@@ -9,6 +9,20 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-11
+
+### Added
+- **Mark a sequence on the genome.** **+ Mark a sequence** finds a stretch of DNA everywhere on the reference, on
+  both strands, and keeps the places as a feature track of its own: how to show CRISPR guides, primer sites, an
+  enzyme site or any motif the gene annotation does not name. Several sequences at a time, one per line, each
+  optionally named (`sgRNA1  GACG...`, or a FASTA header); IUPAC codes are allowed, so a degenerate primer goes in
+  as written. Each hit becomes a feature on the strand it reads on, numbered when a sequence is found more than
+  once. The new track is an ordinary one from then on: shown, shared, exported, put in an experiment, removed.
+  `POST /api/genomes/<id>/tracks/from-sequence`.
+  - The search is exact (a guide's near-matches are not marked), a sequence must be at least 8 bases, and one that
+    is all over the genome stops at 500 places without crowding out the others typed with it.
+  - A sequence found nowhere makes no track and says so, rather than leaving an empty one behind.
+
 ## [0.10.0] - 2026-11-11
 
 ### Added
