@@ -9,6 +9,13 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-11
+
+### Fixed
+- **The bundled Arabidopsis genome was never added.** The image's `/opt/bundled` folder could not be entered by
+  the worker's user, so a new installation started with no genome (the worker logged *could not add the bundled
+  genome: Permission denied*). It is added on the worker's next start.
+
 ## [0.9.1] - 2026-11-11
 
 ### Fixed

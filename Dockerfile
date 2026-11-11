@@ -23,6 +23,9 @@ FROM debian:bookworm-slim
 # change. The worker adds them as the suite's genome on a volume's first start.
 ADD --checksum=sha256:d43e19a85e6ae5dd18cf6adea2d21ed15ad8a58ae374f58dbfdbfcff1b9b13eb --chmod=644     https://github.com/Gardiner-Lab/genome-browser/releases/download/data-araport11/TAIR10_chr_all.fasta.gz /opt/bundled/TAIR10_chr_all.fasta.gz
 ADD --checksum=sha256:cedd155953964ad06b492741569d4e5a61d8db7a1e52a0def164f9f32169d03d --chmod=644     https://github.com/Gardiner-Lab/genome-browser/releases/download/data-araport11/Araport11_GFF3_genes_transposons.20250813.gff.gz /opt/bundled/Araport11_GFF3_genes_transposons.20250813.gff.gz
+# ADD --chmod gives the directory it creates the same 644, which the unprivileged
+# worker cannot enter; the files stay 644.
+RUN chmod 755 /opt/bundled
 
 # ---------------------------------------------------------------------------
 # System packages + bundled conversion toolchain.
