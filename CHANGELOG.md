@@ -9,6 +9,16 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-12
+
+### Added
+- **Primers checked against a genome.** `POST /api/genomes/<id>/primer-check` BLASTs primers against a
+  reference genome and says whether each binds it at one place only: its own site, and the best match
+  elsewhere. The Sequence Editor's bisulfite primers use it. A primer is turned down when another match
+  covers more than 90% of it at more than 90% identity (both can be set), on any chromosome. The worker
+  makes a genome's BLAST database the first time it is checked (seconds for Arabidopsis); until then the
+  check answers 202. The image now has BLAST+ (`ncbi-blast+`).
+
 ## [0.11.0] - 2026-11-11
 
 ### Added
