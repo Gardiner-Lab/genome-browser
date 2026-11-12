@@ -48,4 +48,4 @@ jobs:
           docker run --rm --user 0 -v "$PWD":/src:ro genome-browser:ci sh -c '
             mkdir -p /work && cp -r /src/. /work/ \
             && (for a in 1 2 3; do apt-get update -qq && apt-get install -y -qq python3-pytest >/dev/null && break || sleep $((a * 20)); done) \
-            && cd /work && GENOME_DATA_ROOT=/tmp/genome python3 -m pytest -q test_smoke.py'
+            && cd /work && GENOME_DATA_ROOT=/tmp/genome python3 -m pytest -q test_smoke.py test_primer_check.py'

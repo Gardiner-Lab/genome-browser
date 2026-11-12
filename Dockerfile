@@ -34,7 +34,9 @@ RUN chmod 755 /opt/bundled
 # bio toolchain all come from apt. python3-requests is required because the
 # module imports `requests` (e.g. notebook.py export to the Lab Notebook).
 # tabix brings bgzip and tabix, which index BED/GFF tracks for the viewer
-# (serving.py); samtools faidx indexes the reference sequences.
+# (serving.py); samtools faidx indexes the reference sequences. ncbi-blast+
+# checks primers against a genome (primer_check.py): blastn, and makeblastdb for
+# the database the worker makes of a genome the first time it is checked.
 #
 # Supply chain: the UCSC static binaries are verified against pinned SHA-256s.
 # They are fetched at build time from the canonical UCSC download host, per
@@ -56,7 +58,7 @@ ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_arm64=3c61e496f446d9965f4b945ca3c5ebfa1a669e920
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-flask python3-gunicorn python3-requests \
       samtools tabix bedtools python3-pybigwig python3-deeptools ca-certificates wget \
-      circos liblist-moreutils-perl \
+      circos liblist-moreutils-perl ncbi-blast+ \
  && case "$TARGETARCH" in \
       amd64) ucsc_dir=linux.x86_64;  wig_sha="$UCSC_WIGTOBIGWIG_SHA256_amd64";  bgr_sha="$UCSC_BEDGRAPHTOBIGWIG_SHA256_amd64" ;; \
       arm64) ucsc_dir=linux.aarch64; wig_sha="$UCSC_WIGTOBIGWIG_SHA256_arm64";  bgr_sha="$UCSC_BEDGRAPHTOBIGWIG_SHA256_arm64" ;; \

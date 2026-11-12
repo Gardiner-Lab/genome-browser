@@ -54,6 +54,7 @@ import conversion_queue
 import analysis
 import bundled
 import db
+import primer_check
 
 # How long to wait before polling again when the queue is empty or the
 # free-disk floor is below the safety floor. Short enough that an accepted job
@@ -258,7 +259,8 @@ def run_analysis(conn, data_root) -> bool:
             print(f'[genome-worker] could not tidy old analyses: {exc}', flush=True)
     job = analysis.claim_next(conn)
     if job is None:
-        return False
+        # Nor an analysis: a genome's BLAST database for checking primers (primer_check.py), if asked for.
+        return primer_check.build_next(Path(data_root))
     print(f"[genome-worker] analysis {job['id']} ({job['kind']}) started.", flush=True)
     analysis.run_job(conn, Path(data_root), job)
     return True
