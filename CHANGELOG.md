@@ -9,6 +9,13 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-12
+
+### Changed
+- **A genome is ready for checking primers as soon as it is added.** Its BLAST database is made by the
+  worker in the background on upload, rather than on the first check; at start the worker also makes one
+  for every genome that has none yet, or whose sequence has changed since.
+
 ## [0.12.0] - 2026-11-12
 
 ### Added
