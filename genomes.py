@@ -60,6 +60,7 @@ import access
 import db
 import identity
 import labs_reader
+import primer_check
 import readers
 import serving
 import sharing
@@ -258,6 +259,11 @@ def register_genomes(app: Flask) -> None:
         # Index the sequence for the viewer now (serving.py); if samtools is
         # missing, the first view does it instead.
         serving.prepare_reference(fasta_path)
+        # Its BLAST database, for checking primers against it, made by the worker in the background.
+        try:
+            primer_check.request_build(data_root, genome_id)
+        except OSError:
+            pass                       # the first check asks for it instead
 
         body = {
             'id': genome_id,

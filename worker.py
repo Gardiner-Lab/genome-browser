@@ -310,6 +310,14 @@ def main() -> None:
                 print(f'[genome-worker] added the bundled TAIR10 / Araport11 genome ({added}).', flush=True)
         except Exception as exc:  # never stop the worker over it; an administrator can upload it
             print(f'[genome-worker] could not add the bundled genome: {exc}', flush=True)
+        # A BLAST database for checking primers against each genome that has none yet, made in turn
+        # when nothing else is waiting (primer_check.py).
+        try:
+            asked = primer_check.request_missing(conn, config.data_root)
+            if asked:
+                print(f'[genome-worker] {asked} genome(s) to prepare for checking primers against.', flush=True)
+        except Exception as exc:  # never stop the worker over it; the first check asks instead
+            print(f'[genome-worker] could not look for genomes to prepare: {exc}', flush=True)
 
         while True:
             processed = run_once(conn, config.data_root, config)

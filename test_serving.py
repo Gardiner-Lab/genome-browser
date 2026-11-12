@@ -218,3 +218,14 @@ def test_split_keeps_separator_characters_inside_lines(tmp_path):
     assert head.read_text() == '#h\n'
     assert body.read_text(encoding='utf-8') == \
         'Chr1\t.\tg\t1\t2\t.\t+\t.\tNote=x y z\n'
+
+
+def test_an_added_genome_is_prepared_for_checking_primers(served):
+    """Its BLAST database is asked for on upload, for the worker to make in the background."""
+    import primer_check
+    res = served['client'].post('/api/genomes', data={
+        'name': 'Fresh', 'assembly_id': 'F1',
+        'file': (io.BytesIO(b'>c1\n' + b'ACGT' * 30 + b'\n'), 'f.fa')},
+        headers={'X-Suite-User': 'alice'}, content_type='multipart/form-data')
+    assert res.status_code == 201, res.get_json()
+    assert primer_check.state(served['data_root'], res.get_json()['id'])['state'] == 'building'

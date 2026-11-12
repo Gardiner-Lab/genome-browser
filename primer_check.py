@@ -16,8 +16,10 @@ or a plasmid).
 
 BLAST needs a database made from the genome's sequence (makeblastdb), a minute for Arabidopsis
 and longer for a large genome, so it is made once per genome by the worker, the first time that
-genome is checked, and kept under ``<data>/blastdb/<genome id>/``. Until it is ready the endpoint
-answers 202, and the page asks again.
+genome is added (the upload asks for it), or, for a genome there before, when the worker starts,
+and kept under ``<data>/blastdb/<genome id>/``. A genome checked before its database is ready (or
+whose sequence has changed since) gets one asked for then; meanwhile the endpoint answers 202 and
+the page asks again.
 """
 
 import os
@@ -76,6 +78,17 @@ def request_build(data_root: Path, genome_id: str) -> None:
     wanted.mkdir(parents=True, exist_ok=True)
     db_dir(data_root, genome_id).with_name(f'{genome_id}.failed').unlink(missing_ok=True)
     (wanted / genome_id).touch()
+
+
+def request_missing(conn, data_root: Path) -> int:
+    """For the worker at start: ask for a database for every genome without an up-to-date one."""
+    asked = 0
+    for row in conn.execute('SELECT id FROM reference_genomes'):
+        genome_id = row['id']
+        if _reference(data_root, genome_id).exists() and state(data_root, genome_id)['state'] == 'none':
+            request_build(data_root, genome_id)
+            asked += 1
+    return asked
 
 
 def build_next(data_root: Path) -> bool:

@@ -149,3 +149,22 @@ def test_primers_are_checked_with_blast(genome):
     assert not v['twice']['ok'] and v['twice']['off_target'] == 1
     assert {v['twice']['site']['strand'], v['twice']['other']['strand']} == {'+', '−'}
     assert v['nowhere']['ok'] and v['nowhere']['site'] is None
+
+
+def test_the_worker_asks_at_start_for_genomes_with_no_database(genome, monkeypatch):
+    conn = db.connect(genome['data_root'] / 'genome.db')
+    try:
+        assert primer_check.request_missing(conn, genome['data_root']) == 1
+        assert primer_check.state(genome['data_root'], genome['id'])['state'] == 'building'
+        # Made, it is not asked for again; a sequence changed since, it is.
+        ready = primer_check.db_dir(genome['data_root'], genome['id'])
+        ready.mkdir(parents=True)
+        (primer_check._wanted(genome['data_root']) / genome['id']).unlink()
+        (ready / 'ready').touch()
+        assert primer_check.request_missing(conn, genome['data_root']) == 0
+        import os, time
+        later = time.time() + 60
+        os.utime(primer_check._reference(genome['data_root'], genome['id']), (later, later))
+        assert primer_check.request_missing(conn, genome['data_root']) == 1
+    finally:
+        conn.close()
