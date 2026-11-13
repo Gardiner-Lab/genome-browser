@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 import feature_index
 import regions
 
-KINDS = ('profile', 'compare', 'correlation', 'genes')
+KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif')
 MAX_TRACKS = 12
 MAX_REGION_SETS = 4
 KEEP_DAYS = 7
@@ -363,6 +363,12 @@ def run_job(conn, data_root: Path, job) -> None:
             if not coverage:
                 raise AnalysisError('Choose at least one coverage track.')
             result = run_genes(params, coverage, region_tracks, work)
+        elif kind == 'motif':
+            # Marking a sequence on a big genome: too slow to hold a request open, so it waits here
+            # with the rest. It makes its own BED track (tracks.py), as 'compare' makes a BigWig one.
+            import tracks as tracks_module
+            result = tracks_module.run_motif_job(conn, data_root, job, params)
+            result['files'] = []
         elif kind == 'compare':
             a, b = rows.get(params.get('a')), rows.get(params.get('b'))
             if not a or not b or a['type'] != 'bigwig' or b['type'] != 'bigwig':
@@ -373,7 +379,7 @@ def run_job(conn, data_root: Path, job) -> None:
         else:
             raise AnalysisError(f'Unknown analysis {kind}.')
         result['seconds'] = round(time.time() - started)
-        if kind != 'compare':
+        if kind not in ('compare', 'motif'):
             write_recipe(work, job, params, rows, list(_RECIPE))
             result['files'].append('recipe.zip')
         conn.execute("UPDATE analysis_jobs SET state = 'done', result = ?, finished_at = datetime('now') WHERE id = ?",

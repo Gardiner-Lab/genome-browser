@@ -39,14 +39,32 @@
     // Small helpers
     // ------------------------------------------------------------------
 
+    // The reply as JSON, or an error worth reading. A proxy that gave up waiting, or a
+    // crash, answers with an HTML page: JSON.parse chokes on its first character, so say
+    // what actually happened instead of "unexpected character at line 1 column 1".
+    function readJSON(r) {
+        return r.text().then(function (text) {
+            var body = null;
+            try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+            if (body === null && text) {
+                if (r.status === 504 || r.status === 502 || r.status === 408) {
+                    throw new Error('The server took too long to answer and the connection was cut. '
+                        + 'Marking many sequences at once on a large genome does that: try fewer at a time.');
+                }
+                if (r.status === 413) { throw new Error('That was too large for the server to accept.'); }
+                throw new Error('The server answered with something unexpected (HTTP ' + r.status
+                    + '). If it keeps happening, the genome browser log will say why.');
+            }
+            if (!r.ok) { throw new Error((body && body.error) || ('HTTP ' + r.status)); }
+            return body;
+        });
+    }
+
     function getJSON(url) {
         return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
             .then(function (r) {
                 if (r.status === 401) { signIn(); throw new Error('Not signed in'); }
-                return r.json().then(function (body) {
-                    if (!r.ok) { throw new Error((body && body.error) || ('HTTP ' + r.status)); }
-                    return body;
-                });
+                return readJSON(r);
             });
     }
 
@@ -55,12 +73,7 @@
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body)
-        }).then(function (r) {
-            return r.json().then(function (data) {
-                if (!r.ok) { throw new Error((data && data.error) || ('HTTP ' + r.status)); }
-                return data;
-            });
-        });
+        }).then(readJSON);
     }
 
     function signIn() {
@@ -2967,27 +2980,73 @@
             doi: el('motif-doi').value,
             geo: el('motif-geo').value
         }).then(function (body) {
+            // Too much work to answer at once: it went to the worker's queue, so wait on it there.
+            if (body && body.queued) {
+                el('motif-summary').textContent = body.message;
+                watchMotif(body.job_id, Date.now(), body.estimate_seconds || 0);
+                return null;
+            }
             el('motif-dialog').close();
             el('motif-sequences').value = '';
             el('motif-name').value = '';
-            // The new track joins the list, ticked, as an upload's does.
-            return getJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/tracks').then(function (tracks) {
-                state.tracks = tracks;
-                state.selected.add(body.id);
-                renderTracks();
-                updateOpenHint();
-                var per = body.per_sequence || {};
-                var parts = Object.keys(per).map(function (k) { return k + ': ' + per[k]; });
-                el('track-search-count').textContent = 'Marked ' + body.found + ' place'
-                    + (body.found === 1 ? '' : 's') + (parts.length > 1 ? ' (' + parts.join(', ') + ')' : '')
-                    + ((body.capped || []).length
-                        ? ' — ' + body.capped.join(', ') + ' is all over the genome, so only the first of it is marked'
-                        : '');
-            });
+            return showMarked(body);
         }).catch(function (err) {
             el('motif-summary').hidden = true;
             el('motif-go').disabled = false;
             formError(form, [err.message]);
+        });
+    }
+
+    // The new track joins the list, ticked, as an upload's does.
+    function showMarked(body) {
+        return getJSON(API + '/genomes/' + encodeURIComponent(state.genome.id) + '/tracks').then(function (tracks) {
+            state.tracks = tracks;
+            state.selected.add(body.id);
+            renderTracks();
+            updateOpenHint();
+            var per = body.per_sequence || {};
+            var parts = Object.keys(per).map(function (k) { return k + ': ' + per[k]; });
+            el('track-search-count').textContent = 'Marked ' + body.found + ' place'
+                + (body.found === 1 ? '' : 's') + (parts.length > 1 ? ' (' + parts.join(', ') + ')' : '')
+                + ((body.capped || []).length
+                    ? ' — ' + body.capped.join(', ') + ' is all over the genome, so only the first of it is marked'
+                    : '');
+        });
+    }
+
+    // Asks after a queued search every few seconds, as the Analyse panel does for its jobs.
+    function watchMotif(jobId, since, estimate) {
+        var form = el('motif-form');
+        var expected = estimate > 0
+            ? (estimate < 90 ? ' of about ' + Math.round(estimate) + ' s'
+                             : ' of about ' + Math.round(estimate / 60) + ' min')
+            : '';
+        getJSON(API + '/analyses/' + encodeURIComponent(jobId)).then(function (job) {
+            var secs = Math.round((Date.now() - since) / 1000);
+            var took = secs < 90 ? secs + ' s' : Math.round(secs / 60) + ' min';
+            if (job.state === 'queued' || job.state === 'running') {
+                el('motif-summary').textContent = (job.state === 'queued'
+                    ? 'Waiting for ' + job.ahead + ' other job' + (job.ahead === 1 ? '' : 's')
+                      + ' to finish… (' + took + ' so far' + (expected ? ', then' + expected : '') + ')'
+                    : 'Looking through the genome… (' + took + expected + ')') + '. '
+                    + 'You can close this and keep browsing; it carries on.';
+                state.motifTimer = setTimeout(function () { watchMotif(jobId, since, estimate); }, 3000);
+                return;
+            }
+            el('motif-go').disabled = false;
+            if (job.state === 'failed') {
+                el('motif-summary').hidden = true;
+                formError(form, [job.error || 'It failed.']);
+                return;
+            }
+            el('motif-dialog').close();
+            el('motif-sequences').value = '';
+            el('motif-name').value = '';
+            showMarked(job.result || {});
+        }).catch(function (err) {
+            el('motif-go').disabled = false;
+            el('motif-summary').hidden = true;
+            formError(form, ['Lost track of it: ' + err.message]);
         });
     }
 

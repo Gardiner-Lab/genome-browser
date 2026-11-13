@@ -209,49 +209,37 @@ def register_tracks(app: Flask) -> None:
             fasta = serving.reference_path(data_root, genome['id'])
             if not fasta.exists():
                 return jsonify({'error': "This genome's sequence is not ready yet."}), 503
+            estimate = motif_seconds(queries, chroms)
+            if estimate > INLINE_MOTIF_SECONDS:
+                import analysis
+                analysis.ensure_schema(conn)
+                busy = conn.execute(
+                    "SELECT count(*) FROM analysis_jobs WHERE member = ? AND state IN ('queued', 'running')",
+                    (member,)).fetchone()[0]
+                if busy >= 3:
+                    return jsonify({'error': 'You have three jobs waiting already: let them finish first.'}), 429
+                params = {'name': name, 'sequences': body.get('sequences') or '',
+                          'owner_lab': owner_lab, **source}
+                job_id = analysis.enqueue(conn, genome['id'], member, owner_lab, 'motif', params)
+                ahead = conn.execute("SELECT count(*) FROM analysis_jobs WHERE state IN ('queued', 'running') "
+                                     'AND id <> ?', (job_id,)).fetchone()[0]
+                conn.commit()
+                return jsonify({
+                    'queued': True, 'job_id': job_id, 'ahead': ahead,
+                    'sequences': len(queries), 'genome_mb': round(sum(chroms.values()) / 1e6),
+                    'estimate_seconds': round(estimate),
+                    'message': motif_wait_message(queries, chroms, estimate),
+                }), 202
             try:
-                hits, capped = motifs.search(fasta, queries, chroms)
+                result = build_motif_track(conn, data_root, genome, owner_lab, member, name, source,
+                                           queries, chroms, fasta)
             except OSError as exc:
                 return jsonify({'error': f"The genome's sequence could not be read: {exc}."}), 503
-            if not hits:
-                return jsonify({
-                    'error': 'Not found on this genome, on either strand. Check the sequence, and that '
-                             'it is from this assembly.',
-                    'found': 0}), 400
-
-            hits = motifs.number_hits(hits)
-            track_id = uuid.uuid4().hex
-            scratch_dir = data_root / 'scratch' / f'motif-{track_id}'
-            scratch_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                bed_path = scratch_dir / f'{_safe_name(name, default="sequence")}.bed'
-                bed_path.write_text(motifs.bed_text(hits), encoding='utf-8', newline='')
-                stored_path = _store_file(data_root, track_id, bed_path)
-            finally:
-                shutil.rmtree(scratch_dir, ignore_errors=True)
-            try:
-                feature_index.build(stored_path, regions.feature_parser('bed'))
-            except (OSError, sqlite3.Error):
-                pass                       # the first view builds it instead
-            serving.prepare_feature_track(stored_path, 'bed')
-            conn.execute(
-                'INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, '
-                ' file_path, created_by, experiment, citation, doi, geo) '
-                "VALUES (?, ?, ?, 'bed', ?, ?, 'ready', ?, ?, ?, ?, ?, ?)",
-                (track_id, genome['id'], name, owner_lab, _initial_visibility(owner_lab),
-                 str(stored_path), member, source.get('experiment'), source.get('citation'),
-                 source.get('doi'), source.get('geo')))
-            conn.commit()
+            except MotifNotFound as exc:
+                return jsonify({'error': str(exc), 'found': 0}), 400
         finally:
             conn.close()
-        per_sequence = {}
-        for hit in hits:
-            key = hit.name.rsplit('.', 1)[0] if '.' in hit.name else hit.name
-            per_sequence[key] = per_sequence.get(key, 0) + 1
-        return jsonify({**_track_body(track_id, name, 'bed', owner_lab),
-                        'found': len(hits), 'per_sequence': per_sequence,
-                        'capped': capped,
-                        'searched': [q.name for q in queries]}), 201
+        return jsonify(result), 201
 
     @app.route('/api/tracks', methods=['GET'])
     def search_tracks():
@@ -1072,6 +1060,89 @@ def clean_geo(text):
 
 
 # What PATCH /api/tracks/<id> and an upload may set, and how each is cleaned.
+# Marking a sequence reads the whole reference for every sequence asked for, so the work grows with
+# both. Measured on Arabidopsis (121 Mb): about 2.4 s per sequence, i.e. ~20 s per sequence per Gb.
+# Anything past INLINE_MOTIF_SECONDS goes to the worker's queue instead of holding the request open,
+# which a proxy would cut off long before a big genome finished.
+SECONDS_PER_SEQUENCE_PER_GB = 20.0
+INLINE_MOTIF_SECONDS = 45
+
+
+class MotifNotFound(Exception):
+    """No hit anywhere on the genome: no track is made, rather than an empty one left behind."""
+
+
+def motif_seconds(queries, chroms) -> float:
+    """Roughly how long searching the whole reference for these sequences will take."""
+    return SECONDS_PER_SEQUENCE_PER_GB * len(queries) * (sum(chroms.values()) / 1e9)
+
+
+def motif_wait_message(queries, chroms, estimate: float) -> str:
+    """Why it is not answering at once, in the member's terms."""
+    about = f'{round(estimate / 60)} minutes' if estimate >= 90 else f'{round(estimate)} seconds'
+    bp = sum(chroms.values())
+    size = f'{bp / 1e9:.1f} Gb' if bp >= 1e9 else f'{round(bp / 1e6)} Mb'
+    return (f'{len(queries)} sequences on a {size} genome takes about {about}: '
+            'every sequence is looked for along the whole reference, on both strands. '
+            'It is running in the background, and the track will appear when it is done. '
+            'You can close this and keep browsing.')
+
+
+def build_motif_track(conn, data_root: Path, genome, owner_lab: str, member: str, name: str,
+                      source: dict, queries, chroms, fasta) -> dict:
+    """Search the reference and keep what was found as a BED track. Used directly and from the queue."""
+    hits, capped = motifs.search(fasta, queries, chroms)
+    if not hits:
+        raise MotifNotFound('Not found on this genome, on either strand. Check the sequence, and that '
+                            'it is from this assembly.')
+    hits = motifs.number_hits(hits)
+    track_id = uuid.uuid4().hex
+    scratch_dir = data_root / 'scratch' / f'motif-{track_id}'
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        bed_path = scratch_dir / f'{_safe_name(name, default="sequence")}.bed'
+        bed_path.write_text(motifs.bed_text(hits), encoding='utf-8', newline='')
+        stored_path = _store_file(data_root, track_id, bed_path)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+    try:
+        feature_index.build(stored_path, regions.feature_parser('bed'))
+    except (OSError, sqlite3.Error):
+        pass                       # the first view builds it instead
+    serving.prepare_feature_track(stored_path, 'bed')
+    conn.execute(
+        'INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, '
+        ' file_path, created_by, experiment, citation, doi, geo) '
+        "VALUES (?, ?, ?, 'bed', ?, ?, 'ready', ?, ?, ?, ?, ?, ?)",
+        (track_id, genome['id'], name, owner_lab, _initial_visibility(owner_lab),
+         str(stored_path), member, source.get('experiment'), source.get('citation'),
+         source.get('doi'), source.get('geo')))
+    conn.commit()
+    per_sequence = {}
+    for hit in hits:
+        key = hit.name.rsplit('.', 1)[0] if '.' in hit.name else hit.name
+        per_sequence[key] = per_sequence.get(key, 0) + 1
+    return {**_track_body(track_id, name, 'bed', owner_lab),
+            'found': len(hits), 'per_sequence': per_sequence, 'capped': capped,
+            'searched': [q.name for q in queries]}
+
+
+def run_motif_job(conn, data_root: Path, job, params: dict) -> dict:
+    """The queued form of the above: the worker calls this through analysis.run_job."""
+    genome = conn.execute('SELECT * FROM reference_genomes WHERE id = ?', (job['genome_id'],)).fetchone()
+    if genome is None:
+        raise MotifNotFound('The genome has gone.')
+    name = (params.get('name') or '').strip() or 'sequence'
+    queries = motifs.parse_queries(str(params.get('sequences') or ''), name)
+    chroms = _chrom_sizes(conn, genome['id'])
+    fasta = serving.reference_path(data_root, genome['id'])
+    if not fasta.exists():
+        raise MotifNotFound("This genome's sequence is not ready yet.")
+    source = {f: params.get(f) for f in TRACK_FIELDS}
+    return build_motif_track(conn, data_root, genome, params.get('owner_lab'), job['member'],
+                             name, source, queries, chroms, fasta)
+
+
 TRACK_FIELDS = {'experiment': clean_experiment, 'citation': clean_citation,
                 'doi': clean_doi, 'geo': clean_geo}
 

@@ -9,6 +9,21 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-13
+
+### Fixed
+- **Marking a sequence on a large genome no longer fails with a parser error.** Every sequence is
+  looked for along the whole reference, so the work grows with both the number of sequences and the
+  size of the genome: twenty sequences on a 1.3 Gb genome takes about nine minutes, which the proxy
+  in front of the suite cut off long before it finished. The browser then had an HTML error page
+  where it expected JSON, and said only `JSON.parse: unexpected character at line 1 column 1`.
+- **A search that will take a while now goes to the worker's queue** (a `motif` job, beside the
+  Analyse ones) instead of holding the request open. The reply says why it is waiting — how many
+  sequences, how large the genome, and roughly how long — and the dialog shows the time taken
+  against that estimate while it runs. Short searches still answer at once, as before.
+- **Any reply that is not JSON now says what happened**, everywhere in the browser: a proxy that
+  gave up waiting, a request too large, or a crash, rather than a parser error.
+
 ## [0.12.1] - 2026-11-12
 
 ### Changed
