@@ -9,6 +9,38 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-14
+
+### Added
+- **My jobs, on the suite's dashboard.** A member's analyses and uploads being prepared, from the last
+  week, each with a progress bar: its step, how far it has got, how long it has run, and how many jobs
+  are ahead of one waiting. Finished ones open with a click: an analysis opens its genome showing the
+  result, and a comparison, marked sequences or an upload open the track made. The dashboard's tab is
+  given by `/genome/suite-manifest.json`; the page is also at `/genome/jobs`, linked from every page.
+  The measuring steps report how far they have got; a deepTools step, which does not say, moves the bar
+  by how long it should take, never past 95% of the way until the step is done.
+- **Two choices for a profile** that change what its mean is over, each on unless turned off, as
+  every profile was before: *leave out features with no signal anywhere in the window* (deepTools
+  `--skipZeros`) and *count stretches without data as zero* (`--missingDataAsZero`). The figure says
+  which were used, and the recipe has the flags. On an uploaded RNA-seq track, keeping the genes
+  without signal lowered the gene-body peak from 71.5 to 66.1.
+- **Features at chromosome ends.** A feature whose window runs past the end of a chromosome has steps
+  with no genome under them, counted as zero (or left out) like stretches without reads. The figure
+  names them, and they download as a CSV with how far each runs past the end, to judge whether it
+  matters (13 of 30,831 Arabidopsis genes with 2 kb either side).
+
+### Fixed
+- **Replicate check and circos rings read nothing in 0.12.4.** Measuring many bins at once came from
+  the track's zoom levels, which read 0 for every bin on a real track. Bins are now read exactly from
+  the track (about a second per chromosome). Use this release, not 0.12.4.
+- **A profile's label counts the features drawn.** deepTools leaves out features with no signal
+  anywhere in the window, so "gene (33,318)" could stand over a mean of 30,831 genes. The label now
+  reads "gene (30,831 of 33,318)", and the figure says how many were left out and why.
+
+Checked on an uploaded RNA-seq track against means taken from every base of it: the profile (flanks
+on both strands, and the gene body), the table, the bar chart, the replicate check and the circos
+rings agree.
+
 ## [0.12.4] - 2026-11-14
 
 ### Fixed
