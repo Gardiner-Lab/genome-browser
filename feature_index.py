@@ -35,6 +35,10 @@ VERSION = 2
 
 _BATCH = 50_000
 
+# Finding a feature by its name (the search box). Built with the index; an index built before it had
+# one gets it on the first search (a few seconds for a genome annotation), not a rebuild.
+_BY_NAME = 'CREATE INDEX IF NOT EXISTS features_by_name ON features (name COLLATE NOCASE)'
+
 
 def index_path(file_path) -> Path:
     return Path(str(file_path) + '.idx.sqlite')
@@ -88,6 +92,7 @@ def build(file_path, parse: Callable[[Iterable[str]], Iterable[Feature]]) -> Pat
             conn.executemany('INSERT INTO features VALUES (?, ?, ?, ?, ?, ?)',
                              batch)
         conn.execute('CREATE INDEX features_by_start ON features (chrom, start)')
+        conn.execute(_BY_NAME)
         conn.execute('CREATE TABLE longest (chrom TEXT PRIMARY KEY, '
                      'span INTEGER NOT NULL)')
         conn.executemany('INSERT INTO longest VALUES (?, ?)', longest.items())
@@ -145,6 +150,31 @@ def overlapping(file_path, parse, chrom: str, start: int,
         return None
     return [{'chrom': c, 'start': s, 'end': e, 'name': n}
             for c, s, e, n, _, _ in rows]
+
+
+def named(file_path, parse, name: str, limit: int = 20) -> List[Feature]:
+    """
+    The features whose name is ``name``, ignoring case: a gene typed in the search box (its transcripts
+    and exons are named apart, ``AT3G01835.1``, ``AT3G01835:exon:1``). Genes first, then the longest.
+    An unreadable file finds nothing.
+    """
+    try:
+        idx = ensure(file_path, parse)
+        conn = sqlite3.connect(str(idx), timeout=30)
+        try:
+            try:
+                conn.execute(_BY_NAME)
+                conn.commit()
+            except sqlite3.Error:
+                pass                      # read-only, or busy: the search scans instead
+            rows = conn.execute(
+                'SELECT chrom, start, "end", name, type, strand FROM features WHERE name = ? COLLATE NOCASE '
+                "ORDER BY type <> 'gene', \"end\" - start DESC LIMIT ?", (name, limit)).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        return []
+    return [tuple(r) for r in rows]
 
 
 def details(file_path, parse, chrom: str, start: int, end: int,

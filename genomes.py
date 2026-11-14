@@ -350,6 +350,41 @@ def register_genomes(app: Flask) -> None:
             conn.close()
         return jsonify(tracks)
 
+    @app.route('/api/genomes/<genome_id>/feature-search')
+    def feature_search(genome_id):
+        """
+        A feature by its name, from the genome's own gene annotation and BED tracks that the member may see:
+        what the browser's search box asks when what is typed is not a position. igv.js would otherwise ask
+        igv.org, which knows only the genes of the assembly it names (TAIR10's, not Araport11's), and should
+        not be told what the lab looks for. A list, the best first: {chromosome, start (0-based), end, name,
+        type, track}; empty when nothing is called that.
+        """
+        import feature_index
+        import regions
+        member = identity.require_member()
+        name = (request.args.get('name') or '').strip()
+        if not name or len(name) > 200:
+            return jsonify([])
+        conn = db.connect(current_app.config['DATA_ROOT'] / 'genome.db')
+        try:
+            genome = _load_genome(conn, genome_id)
+            if genome is None or not access.can_view_genome(member, genome, conn):
+                return jsonify({'error': 'Reference genome not found'}), 404
+            rows = [r for r in conn.execute(
+                "SELECT id, name, type, owner_lab, visibility, track_status, file_path FROM tracks "
+                "WHERE genome_id = ? AND type IN ('gff', 'bed') ORDER BY created_at, id", (genome_id,)).fetchall()
+                if r['file_path'] and access.can_view_track(member, r, conn)]
+        finally:
+            conn.close()
+        found = []
+        for row in rows:
+            for chrom, start, end, fname, ftype, _ in feature_index.named(
+                    row['file_path'], regions.feature_parser(row['type']), name):
+                found.append({'chromosome': chrom, 'start': start, 'end': end, 'name': fname, 'type': ftype,
+                              'track': row['name']})
+        found.sort(key=lambda f: (f['type'] != 'gene', -(f['end'] - f['start'])))
+        return jsonify(found[:20])
+
     @app.route('/api/genomes/<genome_id>/share', methods=['POST'])
     def share_genome(genome_id):
         """

@@ -634,7 +634,12 @@
                 showCenterGuide: false,
                 showSampleNames: false,
                 // Several tracks at once are changed in Bulk track settings instead.
-                showMultiSelectButton: false
+                showMultiSelectButton: false,
+                // A gene's name typed in the search box is looked up in this genome's own annotation and BED
+                // tracks. igv.js would ask igv.org, which knows only its own copy of the assembly's genes
+                // (TAIR10's, without Araport11's), and would be told what the lab searches for.
+                search: { url: API + '/genomes/' + encodeURIComponent(genome.id) + '/feature-search?name=$FEATURE$',
+                          coords: 0, chromosomeField: 'chromosome', startField: 'start', endField: 'end' }
             };
             if (view.locus) { options.locus = view.locus; }
             return igv.createBrowser(el('igv-container'), options).then(function (browser) {
