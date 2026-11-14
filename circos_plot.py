@@ -43,6 +43,7 @@ import bigwig_means
 import chrom_names
 import feature_index
 import regions
+import signal_kind
 
 MAX_TRACKS = 12
 MAX_LINKS = 25_000
@@ -171,7 +172,7 @@ def where_text(spans: List[Span], sizes: Dict[str, int], everything: bool) -> st
 
 # --- each track, binned -----------------------------------------------------------
 
-def bigwig_bins(path: str, spans: List[Span], size: int) -> List[Tuple[str, int, int, float]]:
+def bigwig_bins(path: str, spans: List[Span], size: int, level: bool = False) -> List[Tuple[str, int, int, float]]:
     import pyBigWig
     bw = pyBigWig.open(path)
     try:
@@ -186,7 +187,9 @@ def bigwig_bins(path: str, spans: List[Span], size: int) -> List[Tuple[str, int,
             e = min(e, theirs[name])
             # Bases without reads count as zero (bigwig_means.py): pyBigWig's own mean skips them,
             # which drew a bin with reads over a tenth of it as high as one covered throughout.
-            values = bigwig_means.bin_means(bw, name, s, e, size)
+            # A methylation track's level (signal_kind.py) is over its cytosines only: a step with none
+            # is left empty, not drawn as unmethylated.
+            values = bigwig_means.bin_means(bw, name, s, e, size, level)
             for (bs, be), value in zip(_bins((chrom, s, e), size), values):
                 if not math.isnan(value):
                     out.append((chrom, bs, be, float(value)))
@@ -533,7 +536,11 @@ def make(genome: dict, sizes: Dict[str, int], tracks: List[dict], chrom: Optiona
                 legend.append({'name': t['name'], 'what': f'{len(pairs):,} links', 'rgb': colour, 'kind': 'links'})
                 continue
             if t['type'] == 'bigwig':
-                rows, what = bigwig_bins(t['file_path'], spans, size), 'mean coverage'
+                if t.get('signal') == signal_kind.METHYLATION:
+                    rows = bigwig_bins(signal_kind.level_file(t['file_path']), spans, size, level=True)
+                    what = 'methylation level'
+                else:
+                    rows, what = bigwig_bins(t['file_path'], spans, size), 'mean coverage'
                 if log_scale:
                     rows = [(c, s, e, math.log10(1 + max(0.0, v))) for c, s, e, v in rows]
                     what = 'mean coverage, log10(1 + x)'
@@ -667,13 +674,14 @@ def register_circos(app) -> None:
             for item in asked[:MAX_TRACKS + 1]:
                 if not isinstance(item, dict):
                     continue
-                row = conn.execute('SELECT id, genome_id, name, type, owner_lab, visibility, track_status, file_path '
-                                   'FROM tracks WHERE id = ?', (str(item.get('id') or ''),)).fetchone()
+                row = conn.execute('SELECT id, genome_id, name, type, owner_lab, visibility, track_status, file_path, '
+                                   'signal FROM tracks WHERE id = ?', (str(item.get('id') or ''),)).fetchone()
                 if (row is None or row['genome_id'] != genome_id or not row['file_path']
                         or not access.can_view_track(member, row, conn)):
                     continue
                 tracks.append({'id': row['id'], 'name': row['name'], 'type': row['type'],
                                'file_path': row['file_path'], 'color': str(item.get('color') or '')[:40],
+                               'signal': signal_kind.ensure(conn, row) if row['type'] == 'bigwig' else None,
                                'style': str(item.get('style') or 'histogram'), 'height': _int(item.get('height'), 2)})
         finally:
             conn.close()

@@ -111,6 +111,8 @@ _ADDED_COLUMNS = (
     ('tracks', 'citation', 'TEXT'),
     ('tracks', 'doi', 'TEXT'),
     ('tracks', 'geo', 'TEXT'),
+    ('tracks', 'signal', 'TEXT'),           # coverage or methylation (signal_kind.py)
+    ('tracks', 'signal_set_by', 'TEXT'),    # detected, or member
     ('genome_shares', 'auto', 'INTEGER NOT NULL DEFAULT 0'),
 )
 

@@ -38,6 +38,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import feature_index
 import regions
+import signal_kind
 
 KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif')
 MAX_TRACKS = 12
@@ -243,6 +244,43 @@ def _run(args: List[str], cwd: Path, what: str, at: Optional[float] = None,
 
 # --- the analyses ----------------------------------------------------------------------
 
+def _is_level(t: dict) -> bool:
+    """Whether a coverage track is measured as a methylation level (signal_kind.py)."""
+    return t.get('signal') == signal_kind.METHYLATION
+
+
+def _source(t: dict) -> str:
+    """
+    The file to measure a track from. A methylation track that gives minus-strand cytosines a minus
+    sign is measured from a copy with the sign dropped, made once beside it; the recipe makes it too.
+    """
+    if not _is_level(t) or not signal_kind.is_signed(t['file_path']):
+        return t['file_path']
+    path = signal_kind.level_file(t['file_path'])
+    step = ['python3', 'bigwig_means.py', 'unsigned', t['file_path'], '-o', path]
+    if step not in _RECIPE:
+        _RECIPE.append(step)
+    return path
+
+
+def _measured_as(tracks: List[dict], out: dict) -> dict:
+    """Says in a result which tracks were measured as a methylation level, and which had a sign dropped."""
+    level = [t['name'] for t in tracks if _is_level(t)]
+    if level:
+        out['methylation'] = level
+        unsigned = [t['name'] for t in tracks if _is_level(t) and signal_kind.is_signed(t['file_path'])]
+        if unsigned:
+            out['unsigned'] = unsigned
+    return out
+
+
+def _as(tracks: List[dict]) -> List[str]:
+    """bigwig_means.py's --as, when any track is measured as a level (the default is coverage for all)."""
+    if not any(_is_level(t) for t in tracks):
+        return []
+    return ['--as', *['level' if _is_level(t) else 'coverage' for t in tracks]]
+
+
 def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], work: Path) -> dict:
     sets, names, found = [], [], []
     for i, rs in enumerate(params.get('regions') or []):
@@ -267,11 +305,19 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     # black and plotProfile leaves out of the mean.
     skip_zeros = params.get('skip_zeros') is not False
     missing_as_zero = params.get('missing_as_zero') is not False
+    # A methylation track is measured as its level (signal_kind.py): without its sign, and with the
+    # stretches between cytosines left out whatever the choice above, which is then for the coverage
+    # tracks alone. deepTools' flag is for every track at once, so with both kinds the coverage
+    # tracks' missing values are set to zero after (bigwig_means.py fill).
+    levels = [_is_level(t) for t in tracks]
+    paths = [_source(t) for t in tracks]
+    fill_after = missing_as_zero and any(levels) and not all(levels)
     args = ['computeMatrix', 'scale-regions' if mode == 'scale' else 'reference-point',
-            '-S', *[t['file_path'] for t in tracks], '-R', *[str(s) for s in sets],
+            '-S', *paths, '-R', *[str(s) for s in sets],
             '--samplesLabel', *[_label(t['name']) for t in tracks],
             '-b', str(before), '-a', str(after), '-bs', str(binsize), '-p', str(THREADS),
-            *(['--skipZeros'] if skip_zeros else []), *(['--missingDataAsZero'] if missing_as_zero else []),
+            *(['--skipZeros'] if skip_zeros else []),
+            *(['--missingDataAsZero'] if missing_as_zero and not any(levels) else []),
             '-o', 'matrix.gz', '--quiet']
     if mode == 'scale':
         args += ['-m', str(body)]
@@ -282,6 +328,10 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     steps = (before + after + (body if mode == 'scale' else 0)) / binsize
     expect = sum(found) * len(tracks) * max(steps, 1) * 5e-5
     _run(args, work, 'Computing the profile', at=0.0, until=0.85 if params.get('heatmap') else 0.9, expect=expect)
+    if fill_after:
+        coverage = [str(i + 1) for i, lv in enumerate(levels) if not lv]
+        _measure(['fill', str(work / 'matrix.gz'), '--samples', *coverage, '-o', str(work / 'matrix.gz')],
+                 'Counting stretches without reads as zero', span=(0.85, 0.85))
     # Label each set with the features actually drawn: computeMatrix leaves out those with no signal
     # at all (--skipZeros) and those shorter than a bin, so the count found would overstate it.
     drawn = _features_drawn(work / 'matrix.gz')
@@ -298,8 +348,9 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     start_label, end_label = ('start', 'end')
     common = ['--regionsLabel', *labels, '--startLabel', start_label, '--endLabel', end_label,
               '--refPointLabel', 'start' if mode == 'start' else 'end']
+    y_label = 'methylation level' if all(levels) else 'mean signal'
     profile_args = ['plotProfile', '-m', 'matrix.gz', '-o', 'profile.svg', '--perGroup', *common,
-                    '--plotTitle', title or 'Mean signal', '--yAxisLabel', 'mean signal']
+                    '--plotTitle', title or ('Methylation' if all(levels) else 'Mean signal'), '--yAxisLabel', y_label]
     _run(profile_args, work, 'Drawing the profile', at=0.85 if params.get('heatmap') else 0.9)
     files = ['profile.svg', 'matrix.gz']
     if params.get('heatmap'):
@@ -311,9 +362,14 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
                      '--colorMap', colormap, '--heatmapHeight', '18', '--plotTitle', title or 'Signal per feature']
         if k >= 2:
             heat_args += ['--kmeans', str(k)]
+        if any(levels):
+            # Steps with no cytosine measured: light grey, not deepTools' black, which reads as a
+            # value at the bottom of the scale.
+            heat_args += ['--missingDataColor', '0.85']
         _run(heat_args, work, 'Drawing the heatmap', at=0.9)
         files.insert(1, 'heatmap.png')
-    out = {'files': files, 'regions': labels, 'skip_zeros': skip_zeros, 'missing_as_zero': missing_as_zero}
+    out = _measured_as(tracks, {'files': files, 'regions': labels, 'skip_zeros': skip_zeros,
+                                'missing_as_zero': missing_as_zero, 'coverage_tracks': levels.count(False)})
     if left_out:
         out['left_out'] = left_out
     # Features whose window runs past a chromosome end have bins with no genome under them: those count
@@ -376,8 +432,11 @@ def _features_drawn(matrix: Path) -> List[int]:
 def run_compare(params: dict, a: dict, b: dict, work: Path) -> dict:
     op = params.get('operation') if params.get('operation') in OPERATIONS else 'subtract'
     binsize = int(_clamp(params.get('bin'), 10, 10000, 100))
-    args = ['bigwigCompare', '-b1', a['file_path'], '-b2', b['file_path'], '--operation', op,
+    args = ['bigwigCompare', '-b1', _source(a), '-b2', _source(b), '--operation', op,
             '-bs', str(binsize), '-p', str(THREADS), '-o', 'compare.bw']
+    if _is_level(a) or _is_level(b):
+        # Between cytosines a methylation track has no data, which is not zero: leave those steps empty.
+        args.append('--skipNonCoveredRegions')
     if op in ('log2', 'ratio'):
         args += ['--pseudocount', str(_clamp(params.get('pseudocount'), 0.0001, 1000, 1))]
     _run(args, work, 'Comparing the tracks', at=0.0)
@@ -404,16 +463,16 @@ def run_correlation(params: dict, tracks: List[dict], work: Path) -> dict:
     labels = [_label(t['name']) for t in tracks]
     # Not multiBigwigSummary: it averages over covered bases only and leaves a bin with no reads NaN,
     # which plotCorrelation drops, so bins where only one replicate has reads left the correlation.
-    _measure(['bins', *[t['file_path'] for t in tracks], '--labels', *labels, '-bs', str(binsize),
-              '-o', str(work / 'summary.npz'), '--outRawCounts', str(work / 'bins.tab')], 'Summarising the tracks',
-             span=(0.0, 0.7))
+    _measure(['bins', *[_source(t) for t in tracks], '--labels', *labels, '-bs', str(binsize),
+              *_as(tracks), '-o', str(work / 'summary.npz'), '--outRawCounts', str(work / 'bins.tab')],
+             'Summarising the tracks', span=(0.0, 0.7))
     _run(['plotCorrelation', '-in', 'summary.npz', '-c', method, '-p', 'heatmap', '--plotNumbers',
           '--skipZeros', '--removeOutliers', '--colorMap', 'RdYlBu_r', '-o', 'correlation.svg',
           '--plotTitle', f'{method.capitalize()} correlation, {binsize:,} bp bins',
           '--outFileCorMatrix', 'correlation.tab'], work, 'Drawing the correlation', at=0.7)
     _run(['plotPCA', '-in', 'summary.npz', '-o', 'pca.svg', '--plotTitle', 'Principal components'],
          work, 'Drawing the PCA', at=0.85)
-    return {'files': ['correlation.svg', 'pca.svg', 'correlation.tab', 'bins.tab']}
+    return _measured_as(tracks, {'files': ['correlation.svg', 'pca.svg', 'correlation.tab', 'bins.tab']})
 
 
 def run_genes(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], work: Path) -> dict:
@@ -428,7 +487,7 @@ def run_genes(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], 
     labels = [_label(t['name']) for t in tracks]
     # Not multiBigwigSummary: it averages over covered bases only (a gene with 10 over half its
     # length read 10, not 5) and gives a feature with no reads no value at all.
-    _measure(['features', str(bed), *[t['file_path'] for t in tracks], '--labels', *labels,
+    _measure(['features', str(bed), *[_source(t) for t in tracks], '--labels', *labels, *_as(tracks),
               '-o', str(work / 'raw.tab')], 'Measuring each feature', span=(0.0, 0.95))
     _progress('Writing the table', 0.95)
     # deepTools keeps coordinates only: the names come back from the BED, by position.
@@ -467,8 +526,8 @@ def run_genes(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], 
     top = sorted(rows, key=key)[:50]
     preview = [{'name': r[0], 'chrom': r[1], 'start': r[2], 'end': r[3],
                 'values': [None if v is None else round(v, 6) for v in r[5]]} for r in top]
-    return {'files': ['signal-per-feature.csv'], 'count': len(rows), 'preview': preview,
-            'columns': [t['name'] for t in tracks]}
+    return _measured_as(tracks, {'files': ['signal-per-feature.csv'], 'count': len(rows), 'preview': preview,
+                                 'columns': [t['name'] for t in tracks]})
 
 
 def _clamp(value, low, high, default):
@@ -498,8 +557,11 @@ def run_job(conn, data_root: Path, job) -> None:
         rows = {}
         if ids:
             rows = {r['id']: dict(r) for r in conn.execute(
-                f'SELECT id, name, type, file_path, track_status FROM tracks WHERE id IN ({",".join("?" * len(ids))})',
-                ids)}
+                f'SELECT id, name, type, file_path, track_status, signal FROM tracks '
+                f'WHERE id IN ({",".join("?" * len(ids))})', ids)}
+            for r in rows.values():
+                if r['type'] == 'bigwig' and r['track_status'] == 'ready':
+                    r['signal'] = signal_kind.ensure(conn, r)
         coverage = [rows[i] for i in params.get('tracks') or [] if i in rows and rows[i]['type'] == 'bigwig'
                     and rows[i]['track_status'] == 'ready']
         region_tracks = {i: rows[i] for i in rows if rows[i]['type'] in ('gff', 'bed')}
@@ -564,14 +626,21 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
     """
     import zipfile
     from tracks import _export_filename
-    names = {}
+    names, made = {}, {}
     for row in rows.values():
         names[row['file_path']] = _export_filename(row['name'], row['type'], row['file_path'])
+        if row['type'] == 'bigwig' and row['file_path']:
+            # A methylation track's copy without signs is made by the recipe (bigwig_means.py unsigned).
+            stem = names[row['file_path']]
+            made[str(signal_kind.level_path(row['file_path']))] = \
+                (stem[:-3] if stem.endswith('.bw') else stem) + '.level.bw'
     regions = sorted(p.name for p in work.glob('regions*.bed'))
 
     def portable(arg: str) -> str:
         if arg in names:
             return names[arg]
+        if arg in made:
+            return made[arg]
         if arg.startswith(str(work)):
             return Path(arg).name
         return arg
@@ -609,7 +678,9 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
                '- Python 3 with matplotlib (comes with deepTools)']
     if uses_means:
         readme += ['- `bigwig_means.py` (included): each track’s mean over a feature or bin, with the bases a track '
-                   'has no data for counted as zero. It needs pyBigWig and numpy, which come with deepTools.']
+                   'has no data for counted as zero (for a methylation track, `--as level`: left out); and a '
+                   'methylation track without its strand signs (`unsigned`). It needs pyBigWig and numpy, which '
+                   'come with deepTools.']
     readme += ['',
                '## Run', '', 'In a folder with the inputs and these files:', '', '```sh', 'sh run.sh', '```', '',
                'The commands, as they were run:', '', '```sh'] + [shell(c) for c in commands] + ['```', '',
@@ -836,11 +907,19 @@ def register_analysis(app) -> None:
         finally:
             conn.close()
         out = []
+        conn = _db()
+        try:
+            kinds = {tid: signal_kind.ensure(conn, conn.execute('SELECT * FROM tracks WHERE id = ?', (tid,)).fetchone())
+                     for tid, row in rows.items() if row['type'] == 'bigwig' and row['file_path']}
+        finally:
+            conn.close()
         for tid in [str(t) for t in (body.get('tracks') or [])][:40]:
             row = rows.get(tid)
             if row is None or row['type'] != 'bigwig' or not row['file_path']:
                 continue
-            bw = pyBigWig.open(row['file_path'])
+            # A methylation track: its level over the cytosines in the region, without strand signs.
+            level = kinds.get(tid) == signal_kind.METHYLATION
+            bw = pyBigWig.open(signal_kind.level_file(row['file_path']) if level else row['file_path'])
             try:
                 theirs = bw.chroms() or {}
                 name = chrom if chrom in theirs else chrom_names.match_names([chrom], list(theirs)).renames.get(chrom, chrom)
@@ -849,11 +928,12 @@ def register_analysis(app) -> None:
                 else:
                     # Bases without reads count as zero (bigwig_means.py): pyBigWig's own mean skips them.
                     e = min(end, theirs[name])
-                    mean = bigwig_means.mean(bw, name, start, e)
-                    peak = (bw.stats(name, start, e, type='max') or [None])[0]
-                    if peak is None:
+                    mean = bigwig_means.mean(bw, name, start, e, level)
+                    peak = (bw.stats(name, start, e, type='max', exact=True) or [None])[0]
+                    if peak is None and not level:
                         peak = 0.0
             finally:
                 bw.close()
-            out.append({'id': tid, 'name': row['name'], 'mean': mean, 'max': peak})
+            out.append({'id': tid, 'name': row['name'], 'mean': mean, 'max': peak,
+                        'signal': kinds.get(tid, signal_kind.COVERAGE)})
         return jsonify({'chrom': chrom, 'start': start, 'end': end, 'tracks': out})

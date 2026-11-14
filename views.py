@@ -815,6 +815,14 @@ def _browser_html(static_prefix: str) -> str:
           <input id="detail-experiment" list="experiment-names" maxlength="120" autocomplete="off"
                  placeholder="No experiment">
         </label>
+        <label class="gb-field" id="detail-signal-field" hidden><span>Its values
+            <span class="gb-hint">· how the analyses measure it</span></span>
+          <select id="detail-signal">
+            <option value="coverage">Coverage: reads per base, where no data is zero</option>
+            <option value="methylation">Methylation: a level per cytosine, where no data is left out</option>
+          </select>
+        </label>
+        <p class="gb-hint" id="detail-signal-hint" hidden></p>
         <h3 class="gb-share-h">Published in</h3>
         <label class="gb-field"><span>Paper <span class="gb-hint">· as you would cite it</span></span>
           <input id="detail-citation" maxlength="400" autocomplete="off"
@@ -939,9 +947,9 @@ def _browser_html(static_prefix: str) -> str:
           <input type="checkbox" name="missing_as_zero" checked> Count stretches without data as zero</label>
       </div>
       <p data-for="profile" class="gb-hint">Either choice changes the mean: say which you used when you report a profile.
-        Both are in the recipe that comes with the figure. For a methylation level, untick
-        <b>Count stretches without data as zero</b>, and check the track's values have no minus sign for the strand:
-        <a href="{prefix}/help#methylation" target="_blank" rel="noopener">setting up methylation tracks</a>.</p>
+        Both are in the recipe that comes with the figure. Methylation tracks are always measured as a level, over
+        their cytosines and without strand signs, whatever is ticked:
+        <a href="{prefix}/help#methylation" target="_blank" rel="noopener">methylation tracks</a>.</p>
       <div data-for="compare">
         <div class="gb-circos-row">
           <label class="gb-field">Track A <select id="analyse-a"></select></label>

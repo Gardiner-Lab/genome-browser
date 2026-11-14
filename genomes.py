@@ -329,14 +329,17 @@ def register_genomes(app: Flask) -> None:
                 return jsonify({'error': 'Reference genome not found'}), 404
             rows = conn.execute(
                 'SELECT id, name, type, owner_lab, visibility, track_status, file_path, '
-                'experiment, citation, doi, geo, created_at FROM tracks WHERE genome_id = ? '
+                'experiment, citation, doi, geo, created_at, signal FROM tracks WHERE genome_id = ? '
                 'ORDER BY name COLLATE NOCASE, id', (genome_id,)).fetchall()
+            import signal_kind
             from tracks import _export_filename
             tracks = [
                 {'id': row['id'], 'name': row['name'], 'type': row['type'],
                  'owner_lab': row['owner_lab'], 'visibility': row['visibility'],
                  'experiment': row['experiment'], 'created_at': row['created_at'],
                  'citation': row['citation'], 'doi': row['doi'], 'geo': row['geo'],
+                 # Coverage or methylation: how the analyses measure it (signal_kind.py).
+                 'signal': signal_kind.ensure(conn, row) if row['type'] == 'bigwig' else None,
                  'can_change': access.is_owner_lab_member(member, row['owner_lab']) or identity.is_admin(member),
                  # The name it downloads as (Export), which the code to regenerate a figure uses.
                  'export_name': _export_filename(row['name'], row['type'], row['file_path'] or '')}

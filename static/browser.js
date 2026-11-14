@@ -394,6 +394,7 @@
             var kind = trackKind(t.type) + (t.visibility === 'suite' ? ' · shared with everyone'
                 : t.visibility === 'labs' ? ' · shared with other labs'
                 : t.visibility === 'chair_group' ? ' · shared with the chair group' : '')
+                + (t.signal === 'methylation' ? ' · methylation' : '')
                 + (!grouping && t.experiment ? ' · ' + t.experiment : '')
                 + trackSource(t);
             rows.push(make('li', { class: 'gb-track-row' }, [
@@ -2163,7 +2164,8 @@
                         .concat(row.values.map(function (v) { return make('td', { class: 'num', text: v === null ? '' : String(v) }); })));
                 }))]);
             el('analyse-result').replaceChildren(
-                make('p', {}, [document.createTextNode((r.count || 0).toLocaleString('en-US') + ' features measured. ' +
+                make('p', {}, [document.createTextNode((r.count || 0).toLocaleString('en-US') + ' features measured.' +
+                    methylationNote(r) + ' ' +
                     ((r.columns || []).length === 2 ? 'The 50 with the largest difference between the two tracks:' : 'The 50 highest:') + ' '),
                     make('a', { href: downloads[0].url, download: 'signal-per-feature.csv', text: 'Download the whole table (CSV)' })]),
                 make('div', { class: 'gb-analyse-table-wrap' }, [table]));
@@ -2178,8 +2180,9 @@
                 kind: 'analysis', svg: svg, locus: state.genome.assembly_id + ', ' + (job.kind === 'profile' ? 'profile' : 'replicate check'),
                 filename: base, selection: null, title: heading, downloads: downloads,
                 recipe: { kind: 'deeptools', jobId: job.id },
-                about: job.kind === 'profile' ? profileAbout(r)
-                    : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.',
+                about: (job.kind === 'profile' ? profileAbout(r)
+                    : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.')
+                    + methylationNote(r),
                 tracks: checkedValues(el('analyse-tracks')).map(function (id) {
                     var t = state.tracks.find(function (x) { return x.id === id; });
                     return t ? t.name : id;
@@ -2192,6 +2195,17 @@
 
     // What a profile is the mean of: the choices made, what was left out, and the features whose window
     // runs past a chromosome end, so whoever reads the figure can judge whether that matters.
+    // Which tracks an analysis measured as a methylation level (signal_kind.py), said in its caption.
+    function methylationNote(r) {
+        var names = r.methylation || [];
+        if (!names.length) { return ''; }
+        var quoted = names.map(function (n) { return '“' + n + '”'; }).join(', ');
+        return ' ' + quoted + (names.length === 1 ? ' is a methylation track, measured' : ' are methylation tracks, measured') +
+            ' as a level: the mean over the cytosines with data, leaving out the stretches between them' +
+            ((r.unsigned || []).length ? ', and without the minus sign the file gives minus-strand cytosines' : '') +
+            '. (Set in each track’s Details.)';
+    }
+
     function profileAbout(r) {
         var count = function (n) { return Number(n).toLocaleString('en-US'); };
         var parts = ['Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.'];
@@ -2205,8 +2219,11 @@
             parts.push('Features with no signal in the window would have been left out; none were.');
         }
         if (!skip) { parts.push('Every feature counts, with or without signal.'); }
-        parts.push(zero ? 'Stretches without data count as zero.'
-            : 'Stretches without data are left out of the mean, and black in the heatmap.');
+        // With only methylation tracks the choice did not apply: their stretches without data are always left out.
+        if (r.coverage_tracks !== 0) {
+            parts.push(((r.methylation || []).length ? 'For the coverage tracks, stretches' : 'Stretches') +
+                (zero ? ' without data count as zero.' : ' without data are left out of the mean, and black in the heatmap.'));
+        }
         if (r.off_end && r.off_end.count) {
             var shown = r.off_end.features.slice(0, 6).join(', ') + (r.off_end.count > 6 ? ', …' : '');
             parts.push('Note: the window of ' + count(r.off_end.count) + (r.off_end.count === 1 ? ' feature runs' : ' features run') +
@@ -2274,9 +2291,14 @@
             parts.push('</svg>');
             el('analyse-dialog').close();
             openFigureDialog({ kind: 'analysis', svg: parts.join(''), locus: where, filename: 'selection-means_' + where.replace(/[^\w.-]+/g, '_'),
-                selection: sel, title: title, about: 'The mean of each coverage track over the selection.',
+                selection: sel, title: title,
+                about: 'The mean of each coverage track over the selection.' + methylationNote({
+                    methylation: rows.filter(function (t) { return t.signal === 'methylation'; }).map(function (t) { return t.name; })
+                }),
                 recipe: { kind: 'bars', chrom: sel.chrom, start: sel.start, end: sel.end,
-                          tracks: rows.map(function (t) { return { id: t.id, color: colours[t.id] }; }) },
+                          tracks: rows.map(function (t) {
+                              return { id: t.id, color: colours[t.id], methylation: t.signal === 'methylation' };
+                          }) },
                 tracks: rows.map(function (t) { return t.name + ': ' + Number(t.mean.toPrecision(4)); }) });
         }).catch(function (err) {
             formError(form, ['Could not draw it: ' + err.message]);
@@ -2473,15 +2495,26 @@
             '',
             'TITLE = ' + pyString(fig.title),
             'CHROM, START, END = ' + pyString(r.chrom) + ', ' + r.start + ', ' + r.end + '   # 0-based, end not included',
-            'TRACKS = [  # (file, label, colour)',
-            files.map(function (f) { return '    (' + pyString(f.file) + ', ' + pyString(f.name) + ', ' + pyString(f.colour) + '),'; }).join('\n'),
+            'TRACKS = [  # (file, label, colour, methylation: measured as a level per cytosine)',
+            files.map(function (f, i) {
+                return '    (' + pyString(f.file) + ', ' + pyString(f.name) + ', ' + pyString(f.colour) + ', ' +
+                    (r.tracks[i].methylation ? 'True' : 'False') + '),';
+            }).join('\n'),
             ']',
             '',
             'means = []',
-            'for path, label, colour in TRACKS:',
+            'for path, label, colour, methylation in TRACKS:',
             '    bw = pyBigWig.open(path)',
             '    if CHROM not in bw.chroms():',
             '        means.append(None)',
+            '    elif methylation:',
+            '        # A methylation level: the mean over the cytosines with data only, and without the minus',
+            '        # sign some files give minus-strand cytosines (otherwise the two strands cancel).',
+            '        end = min(END, bw.chroms(CHROM))',
+            '        entries = bw.intervals(CHROM, START, end) or [] if end > START else []',
+            '        parts = [(min(e, end) - max(s, START), abs(v)) for s, e, v in entries]',
+            '        n = sum(w for w, _ in parts)',
+            '        means.append(sum(w * v for w, v in parts) / n if n else None)',
             '    else:',
             '        # Bases without reads count as zero: the signal summed over the region, over its length.',
             '        # (stats(type="mean") averages over the covered bases only, so a sparse track reads high.)',
@@ -2501,7 +2534,7 @@
             'fig.tight_layout()',
             'fig.savefig("selection-means.svg")',
             'fig.savefig("selection-means.png", dpi=200)',
-            'for (path, label, colour), m in zip(TRACKS, means):',
+            'for (path, label, colour, methylation), m in zip(TRACKS, means):',
             '    print(f"{label}\\t{m}")',
             ''].join('\n');
         var name = fig.filename + '.py';
@@ -2821,6 +2854,9 @@
         el('detail-citation').value = t.citation || '';
         el('detail-doi').value = t.doi || '';
         el('detail-geo').value = t.geo || '';
+        el('detail-signal-field').hidden = t.type !== 'bigwig';
+        el('detail-signal').value = t.signal || 'coverage';
+        signalHint(t);
         el('detail-saved').textContent = '';
         el('detail-edit').hidden = !t.can_change;
         renderFacts(t);
@@ -2920,6 +2956,10 @@
         var facts = el('detail-facts');
         var rows = [];
         if (!t.can_change) {
+            if (t.type === 'bigwig') {
+                rows.push(['Its values', [document.createTextNode(t.signal === 'methylation'
+                    ? 'Methylation, measured as a level per cytosine' : 'Coverage')]]);
+            }
             if (t.experiment) { rows.push(['Experiment', [document.createTextNode(t.experiment)]]); }
             if (t.citation) { rows.push(['Paper', [document.createTextNode(t.citation)]]); }
             if (t.doi) {
@@ -2939,10 +2979,26 @@
 
     var DETAIL_FIELDS = ['experiment', 'citation', 'doi', 'geo'];
 
+    // Coverage or methylation: found from the file when the track was first listed, and the
+    // track's own lab can change it. It decides how every analysis measures the track.
+    var SIGNAL_TEXT = {
+        coverage: 'Analyses take the mean over every base, with no data counted as zero.',
+        methylation: 'Analyses take its methylation level: the mean over the cytosines with data, '
+            + 'leaving out the stretches between them, and without the minus sign some files give '
+            + 'minus-strand cytosines. Shown on screen as it is in the file.'
+    };
+
+    function signalHint(t) {
+        var hint = el('detail-signal-hint');
+        hint.hidden = t.type !== 'bigwig';
+        hint.textContent = SIGNAL_TEXT[el('detail-signal').value] || '';
+    }
+
     function saveDetails() {
         var t = state.detailTrack;
         var body = {};
         DETAIL_FIELDS.forEach(function (f) { body[f] = el('detail-' + f).value; });
+        if (t.type === 'bigwig') { body.signal = el('detail-signal').value; }
         el('detail-saved').textContent = '';
         sendJSON('PATCH', API + '/tracks/' + encodeURIComponent(t.id), body)
             .then(function (saved) {
@@ -2950,8 +3006,12 @@
                     t[f] = saved[f] || null;
                     el('detail-' + f).value = t[f] || '';
                 });
+                if (saved.signal) { t.signal = saved.signal; }
                 state.tracks.forEach(function (u) {
-                    if (u.id === t.id) { DETAIL_FIELDS.forEach(function (f) { u[f] = t[f]; }); }
+                    if (u.id === t.id) {
+                        DETAIL_FIELDS.forEach(function (f) { u[f] = t[f]; });
+                        u.signal = t.signal;
+                    }
                 });
                 detailError('');
                 el('detail-saved').textContent = 'Saved.';
@@ -3309,6 +3369,7 @@
     });
     el('detail-close').addEventListener('click', function () { el('detail-dialog').close(); });
     el('detail-save').addEventListener('click', saveDetails);
+    el('detail-signal').addEventListener('change', function () { signalHint(state.detailTrack); });
     DETAIL_FIELDS.forEach(function (f) {
         el('detail-' + f).addEventListener('keydown', function (e) {
             if (e.key === 'Enter') { e.preventDefault(); saveDetails(); }

@@ -9,6 +9,24 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Added
+- **Methylation tracks are measured as a methylation level, with nothing to set up.** A coverage
+  track whose file holds per-cytosine calls (single-base values, alone or in pairs, within 0-1 or
+  0-100) is recognised as *methylation* when first listed; the track list says so, and the track's
+  lab can change it in Details (*Its values*). Every analysis then takes its mean over the cytosines
+  with data, leaving out the stretches between them (not zero), and without the minus sign that many
+  GEO files give minus-strand cytosines, which made a CG's two cytosines cancel to 0. On screen the
+  track is drawn as its file has it. In a profile with coverage tracks too, *count stretches without
+  data as zero* applies to the coverage tracks only (`bigwig_means.py fill`); in a heatmap, steps with
+  no cytosine are light grey. Each figure says which tracks were measured this way, and the recipe
+  makes the copy without signs (`bigwig_means.py unsigned`) and measures with `--as level`.
+  On the GEO CG tracks: transposon bodies 0.65, gene bodies 0.14 (they read about 0 before), and the
+  table matched values taken straight from the file for 2,000 of 2,000 transposons.
+- Help, *Methylation tracks*, rewritten to say what the browser does and what is still the lab's to
+  get right (one context per track, enough reads, steps of 50 bp or more, one file per strand).
+
 ## [0.13.0] - 2026-11-14
 
 ### Added

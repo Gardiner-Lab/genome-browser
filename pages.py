@@ -330,49 +330,44 @@ def help_html(static_prefix: str, prefix: str) -> str:
     </section>
 
     <section id="methylation">
-      <h2>Methylation tracks: setting them up</h2>
+      <h2>Methylation tracks</h2>
       <p>Bisulfite (or nanopore) methylation calls are not like read coverage: there is one value per cytosine, the
-         fraction of reads that were methylated there, and nothing in between. Three things need care before the
-         figures mean what you think.</p>
-      <h3>1. Values with a sign for the strand</h3>
-      <p>Many published files, GEO ones especially, keep both strands in one track and mark minus-strand cytosines with
-         a <b>minus sign</b>: 0.8 is a methylated C on the plus strand, &minus;0.8 one on the minus strand. Every
-         analysis averages, and averaging these cancels the strands against each other, so a profile comes out near
-         zero with dips below it. Check a file before using it: zoom in to a few hundred bases and see whether bars
-         hang below the line. If they do, fix it <b>before you upload</b>, in one of two ways:</p>
+         fraction (or percent) of reads methylated there, and nothing in between. The browser treats them as such,
+         so you upload the file as it is and run any analysis as usual.</p>
+      <h3>What the browser does</h3>
       <ul>
-        <li><b>Both strands together</b> (what you usually want, and right for CG, which is methylated on both
-            strands alike): make every value positive.
-            <pre><code>bigWigToBedGraph GSM_CG.bw GSM_CG.bedGraph        # skip if you have a bedGraph or wig already
-awk 'BEGIN{{OFS="\\t"}} $4 &lt; 0 {{$4 = -$4}} {{print}}' GSM_CG.bedGraph &gt; GSM_CG.level.bedGraph</code></pre></li>
-        <li><b>Each strand its own track</b> (for CHG and CHH, or strand-specific questions): split on the sign, and
-            make the minus one positive.
-            <pre><code>awk 'BEGIN{{OFS="\\t"}} $4 &gt; 0' GSM_CG.bedGraph &gt; GSM_CG.plus.bedGraph
-awk 'BEGIN{{OFS="\\t"}} $4 &lt; 0 {{$4 = -$4; print}}' GSM_CG.bedGraph &gt; GSM_CG.minus.bedGraph</code></pre>
-            A cytosine with no methylation at all is 0 on either strand, so it has no sign and cannot be put on a
-            strand this way: the split tracks only hold methylated cytosines, and their means read high. Use the
-            split only to compare the strands with each other, or get files that give the strand in a column of its
-            own (Bismark's <code>CX_report</code>, MethylDackel), and make one bedGraph per strand from those.</li>
+        <li><b>It recognises them.</b> When a coverage track is first listed, the browser looks at its file: values
+            one base long, standing alone or in pairs, all within 0 to 1 (or 0 to 100), make it a <b>methylation</b>
+            track; anything else is <b>coverage</b>. The track list says <i>methylation</i> beside it. If it guessed
+            wrong, change it under <b>Its values</b> in the track's <b>Details</b> (its own lab can).</li>
+        <li><b>It measures the level.</b> Every analysis (profile and heatmap, signal per feature, replicate check,
+            tracks over the selection, Circos plot, difference between two tracks) takes a methylation track's mean
+            over the cytosines that have data, and leaves out the stretches between them, which are not unmethylated,
+            just not measured. So a figure reads 0 to 1: the methylation level, as papers show it. In a heatmap, a
+            step with no cytosine is light grey. The <b>Count stretches without data as zero</b> choice of a profile
+            then applies to the coverage tracks only.</li>
+        <li><b>It drops the strand sign.</b> Many published files, GEO ones especially, keep both strands in one
+            track and give minus-strand cytosines a <b>minus sign</b>: &minus;0.8 is a cytosine on the minus strand,
+            80% methylated. Averaged as they are, a CG's two cytosines (+0.8 and &minus;0.8) cancel to 0. The
+            analyses measure such a track without the sign (from a copy made once, beside it); on screen it is
+            drawn as the file has it, minus strand below the line.</li>
       </ul>
-      <p>The browser takes the <code>.bedGraph</code> as it is and turns it into a coverage track. Name it so the
-         lab can tell (<i>WT rep 2, CG, both strands</i>), and give the GEO sample in its details.</p>
-      <h3>2. One context per track</h3>
-      <p>Keep CG, CHG and CHH in separate tracks: their levels differ tenfold, and mixed they say nothing. Leave
-         out cytosines read too few times (under 3 to 5 reads is usual) when you make the file, if the calls give the
-         read count; one read is 0 or 1 and nothing between.</p>
-      <h3>3. Level, or methylated cytosines per base</h3>
-      <p>Between cytosines a methylation track has no data. Whether that counts as zero decides what a mean is:</p>
+      <p>Each figure says which tracks were measured this way, and its recipe has the steps
+         (<code>bigwig_means.py unsigned</code> and <code>--as level</code>), so it can be made again outside.</p>
+      <h3>What is still yours to get right</h3>
       <ul>
-        <li><b>Counted as zero</b>: the mean is methylation per base pair, high where there are many methylated
-            cytosines. It mixes how methylated they are with how many there are.</li>
-        <li><b>Left out</b>: the mean is the <b>methylation level</b> of the cytosines there, 0 to 1, the figure most
-            papers show.</li>
+        <li><b>One context per track.</b> Keep CG, CHG and CHH in separate tracks: their levels differ tenfold, and
+            mixed they say nothing.</li>
+        <li><b>Enough reads.</b> Leave out cytosines read too few times (under 3 to 5 is usual) when you make the
+            file, if the calls give the read count: one read is 0 or 1 and nothing between.</li>
+        <li><b>Steps big enough to hold cytosines.</b> For a profile, use steps of 50 bp or more.</li>
+        <li><b>Each strand on its own</b>, if that is your question (CHG, CHH, strand-specific effects): make one
+            file per strand from calls that give the strand in a column (Bismark's <code>CX_report</code>,
+            MethylDackel). Splitting a signed file on its sign does not work: an unmethylated cytosine is 0 on either
+            strand, so it has no sign, and the split tracks would hold only methylated cytosines.</li>
       </ul>
-      <p>For a level, in <b>Profile around features</b> untick <b>Count stretches without data as zero</b>, and use
-         bins of 50 bp or more so each holds a few cytosines; stretches with none show black in the heatmap, as they
-         should. <b>Signal per feature</b>, <b>Replicate check</b>, <b>Tracks over the selection</b> and the
-         <b>Circos plot</b> always count them as zero, so on a methylation track they give methylated cytosines per
-         base, not a level: fine for comparing like with like (two genotypes in the same context), but say so.</p>
+      <p>The browser takes <code>.bedGraph</code> and <code>.wig</code> files as they are and makes coverage tracks of
+         them. Name the track so the lab can tell (<i>WT rep 2, CG</i>), and give the GEO sample in its details.</p>
     </section>
 
     <section id="genome">

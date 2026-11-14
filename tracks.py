@@ -64,6 +64,7 @@ from pathlib import Path
 from flask import Flask, current_app, has_request_context, jsonify, request, send_file
 
 import access
+import signal_kind
 import align
 import chrom_names
 import conversion_queue
@@ -322,12 +323,18 @@ def register_tracks(app: Flask) -> None:
         member = identity.require_member()
         body = request.get_json(silent=True) or {}
         fields = [f for f in TRACK_FIELDS if f in body]
-        if not fields:
-            return jsonify({'error': 'Nothing to change: send experiment, citation, doi or geo.'}), 400
+        if not fields and 'signal' not in body:
+            return jsonify({'error': 'Nothing to change: send experiment, citation, doi, geo or signal.'}), 400
         try:
             values = {f: TRACK_FIELDS[f](body.get(f)) for f in fields}
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
+        if 'signal' in body:
+            # What a coverage track's values are: how the analyses measure it (signal_kind.py).
+            if body['signal'] not in signal_kind.KINDS:
+                return jsonify({'error': 'signal is coverage or methylation.'}), 400
+            fields += ['signal', 'signal_set_by']
+            values.update({'signal': body['signal'], 'signal_set_by': 'member'})
         conn = db.connect(Path(current_app.config['DATA_ROOT']) / 'genome.db')
         try:
             track = conn.execute('SELECT * FROM tracks WHERE id = ?', (track_id,)).fetchone()
@@ -336,6 +343,8 @@ def register_tracks(app: Flask) -> None:
                 return jsonify({'error': 'Track not found'}), 404
             if not (access.is_owner_lab_member(member, track['owner_lab']) or identity.is_admin(member)):
                 return jsonify({'error': "Only the track's own lab changes its details."}), 403
+            if 'signal' in values and track['type'] != 'bigwig':
+                return jsonify({'error': 'Only a coverage track has a kind of signal.'}), 400
             conn.execute('UPDATE tracks SET ' + ', '.join(f'{f} = ?' for f in fields) + ' WHERE id = ?',
                          [values[f] for f in fields] + [track_id])
             conn.commit()
@@ -1250,6 +1259,7 @@ def _track_metadata(track) -> dict:
         'citation': track['citation'] if 'citation' in track.keys() else None,
         'doi': track['doi'] if 'doi' in track.keys() else None,
         'geo': track['geo'] if 'geo' in track.keys() else None,
+        'signal': track['signal'] if 'signal' in track.keys() else None,
         'created_at': track['created_at'] if 'created_at' in track.keys() else None,
     }
 
