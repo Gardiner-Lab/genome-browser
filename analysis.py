@@ -206,11 +206,13 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     before, after = (int(_clamp(params.get(k), 0, 20000, 2000)) for k in ('before', 'after'))
     body = int(_clamp(params.get('body'), 500, 20000, 3000))
     binsize = int(_clamp(params.get('bin'), 10, 5000, 100))
+    # A coverage track has no entries where nothing was read, so without --missingDataAsZero those
+    # bins are NaN: plotHeatmap paints them black and plotProfile leaves them out of the mean.
     args = ['computeMatrix', 'scale-regions' if mode == 'scale' else 'reference-point',
             '-S', *[t['file_path'] for t in tracks], '-R', *[str(s) for s in sets],
             '--samplesLabel', *[_label(t['name']) for t in tracks],
             '-b', str(before), '-a', str(after), '-bs', str(binsize), '-p', str(THREADS), '--skipZeros',
-            '-o', 'matrix.gz', '--quiet']
+            '--missingDataAsZero', '-o', 'matrix.gz', '--quiet']
     if mode == 'scale':
         args += ['-m', str(body)]
     else:

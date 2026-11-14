@@ -131,6 +131,19 @@ def test_a_failed_analysis_says_why(world):
     assert row['state'] == 'failed' and 'were found' in row['error']
 
 
+def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
+    # Without it, bins a coverage track has no entries for are NaN: black in the heatmap.
+    runs = []
+    monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
+    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
+    analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
+                         [{'file_path': 'wt.bw', 'name': 'WT'}], {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}},
+                         tmp_path)
+    compute = next(a for a in runs if a[0] == 'computeMatrix')
+    assert '--missingDataAsZero' in compute
+    assert [a[0] for a in runs] == ['computeMatrix', 'plotProfile', 'plotHeatmap']
+
+
 @pytest.mark.skipif(not HAS_DEEPTOOLS, reason='deepTools is not installed here (it is in the image)')
 def test_every_analysis_with_deeptools(world):
     w, ids = world, world['ids']
