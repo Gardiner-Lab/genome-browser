@@ -135,7 +135,7 @@ def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
     # Without it, bins a coverage track has no entries for are NaN: black in the heatmap.
     runs = []
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
-    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(args))
+    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(step.get('recipe') or args))
     monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
     monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
     analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
@@ -143,7 +143,9 @@ def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
                          tmp_path)
     compute = next(a for a in runs if a[0] == 'computeMatrix')
     assert '--missingDataAsZero' in compute
-    assert [a[0] for a in runs] == ['computeMatrix', 'plotProfile', 'plotHeatmap']
+    assert [a[0] for a in runs] == ['computeMatrix', 'plotProfile', 'python3']
+    # plotHeatmap, through bigwig_means.py so the tracks' names are turned 45 degrees.
+    assert runs[-1][:4] == ['python3', 'bigwig_means.py', 'heatmap', '-m']
 
 
 def test_profile_choices_reach_compute_matrix(monkeypatch, tmp_path):

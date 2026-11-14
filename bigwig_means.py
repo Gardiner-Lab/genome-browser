@@ -24,6 +24,7 @@ This file is also the script the recipes carry (it needs only pyBigWig, and nump
     python3 bigwig_means.py unsigned CG.bw -o CG.level.bw       # minus-strand cytosines' sign dropped
     python3 bigwig_means.py fill matrix.gz --samples 1 -o matrix.gz   # computeMatrix's NaN as 0, for sample 1
     python3 bigwig_means.py interpolate matrix.gz --samples 2 -o heatmap-matrix.gz   # for the heatmap only
+    python3 bigwig_means.py heatmap -m matrix.gz -o heatmap.png ...   # plotHeatmap, column names at 45 degrees
 
 Both write the tab-separated table ``multiBigwigSummary --outRawCounts`` does (0-based starts),
 and ``bins`` the .npz it does, which ``plotCorrelation`` and ``plotPCA`` read.
@@ -250,7 +251,57 @@ def interpolate(matrix: str, samples: List[int], out: str) -> None:
         fh.write(lines[0] + '\n' + ''.join(line + '\n' for line in body))
 
 
+def heatmap(args: List[str]) -> None:
+    """
+    deepTools' plotHeatmap with the same arguments, but each column's name (the track's) tilted 45
+    degrees, starting over the middle of its column, and the plot title moved above them. plotHeatmap
+    writes them level and centred, so two long track names run into each other, and it has no option
+    to turn them.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.axes
+    import matplotlib.pyplot as plt
+    from deeptools import plotHeatmap
+
+    set_title = matplotlib.axes.Axes.set_title
+
+    def tilted(ax, label, *a, **kw):
+        kw.update(rotation=45, rotation_mode='anchor', ha='left', va='bottom')
+        text = set_title(ax, label, *a, **kw)
+        text.set_x(0.5)
+        return text
+
+    savefig = plt.savefig
+
+    def save(*a, **kw):
+        fig = plt.gcf()
+        top = fig._suptitle
+        if top is not None and top.get_text():
+            renderer = fig.canvas.get_renderer()
+            heights = [ax.title.get_window_extent(renderer).y1 for ax in fig.axes if ax.title.get_text()]
+            if heights:
+                y = fig.transFigure.inverted().transform((0, max(heights)))[1]
+                top.set_y(y + 0.01)
+                top.set_va('bottom')
+        return savefig(*a, **kw)
+
+    matplotlib.axes.Axes.set_title = tilted
+    plt.savefig = save
+    try:
+        plotHeatmap.main(args)
+    finally:
+        matplotlib.axes.Axes.set_title = set_title
+        plt.savefig = savefig
+
+
 def main(argv: Optional[List[str]] = None, progress: Progress = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv[:1] == ['heatmap']:
+        # Its arguments are plotHeatmap's own, passed on as they are.
+        heatmap(argv[1:])
+        return
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0].strip())
     sub = p.add_subparsers(dest='what', required=True)
     f = sub.add_parser('features', help='each track’s mean over each line of a BED file')

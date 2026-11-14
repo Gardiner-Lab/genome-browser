@@ -18,9 +18,13 @@ and the project uses [semantic versioning](https://semver.org/).
   caption says so. With coverage tracks whose gaps are left out (as chosen), each heatmap pixel is
   one feature's value, so gaps no longer grey out the rest.
 
-## [0.14.0] - 2026-11-14
+### Changed
+- **The heatmap's track names are turned 45 degrees**, each starting over the middle of its column,
+  with the plot title above them: two long names written level ran into each other. deepTools has no
+  option for it, so the heatmap is drawn through `bigwig_means.py heatmap`, which passes every
+  argument on to plotHeatmap; the recipe runs it the same way and includes the script.
 
-## [Unreleased]
+## [0.14.0] - 2026-11-14
 
 ### Added
 - **Methylation tracks are measured as a methylation level, with nothing to set up.** A coverage

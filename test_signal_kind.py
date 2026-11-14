@@ -236,7 +236,7 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
     runs = []
     cg = _cg_track(tmp_path / 'cg.bw')
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
-    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(args))
+    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(step.get('recipe') or args))
     monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
     monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
     measured = []
@@ -247,7 +247,7 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
                                {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}}, tmp_path)
     compute = next(a for a in runs if a[0] == 'computeMatrix')
     assert '--missingDataAsZero' not in compute and str(tmp_path / 'cg.level.bw') in compute
-    heat = next(a for a in runs if a[0] == 'plotHeatmap')
+    heat = next(a for a in runs if a[2:3] == ['heatmap'])
     assert heat[heat.index('--missingDataColor') + 1] == '0.85'
     # The heatmap is drawn from the matrix with each row's empty steps filled; the profile from the measured one.
     assert heat[heat.index('-m') + 1] == 'heatmap-matrix.gz' and 'heatmap and colorbar' in heat

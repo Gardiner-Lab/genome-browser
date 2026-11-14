@@ -31,6 +31,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -210,7 +211,7 @@ def _label(name: str) -> str:
 
 
 def _run(args: List[str], cwd: Path, what: str, at: Optional[float] = None,
-         until: Optional[float] = None, expect: float = 0.0) -> None:
+         until: Optional[float] = None, expect: float = 0.0, recipe: Optional[List[str]] = None) -> None:
     """
     Run one command of the analysis.
 
@@ -221,7 +222,7 @@ def _run(args: List[str], cwd: Path, what: str, at: Optional[float] = None,
     """
     if at is not None:
         _progress(what, at)
-    _RECIPE.append(list(args))
+    _RECIPE.append(list(recipe or args))
     env = dict(os.environ, MPLBACKEND='Agg', MPLCONFIGDIR=str(cwd / '.mpl'))
     started = time.time()
     proc = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -380,7 +381,11 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
             # Coverage left with gaps (as chosen): each pixel one feature's value, not a blend that any
             # gap turns to the missing colour.
             heat_args += ['--interpolationMethod', 'nearest']
-        _run(heat_args, work, 'Drawing the heatmap', at=0.9)
+        # Through bigwig_means.py, which turns the tracks' names over their columns 45 degrees, so long
+        # names don't run into each other.
+        heat_args = ['heatmap', *heat_args[1:]]
+        _run([sys.executable, str(Path(__file__).with_name('bigwig_means.py')), *heat_args], work,
+             'Drawing the heatmap', at=0.9, recipe=['python3', 'bigwig_means.py', *heat_args])
         files.insert(1, 'heatmap.png')
     out = _measured_as(tracks, {'files': files, 'regions': labels, 'skip_zeros': skip_zeros,
                                 'missing_as_zero': missing_as_zero, 'coverage_tracks': levels.count(False)})
@@ -695,7 +700,8 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
     if uses_means:
         readme += ['- `bigwig_means.py` (included): each track’s mean over a feature or bin, with the bases a track '
                    'has no data for counted as zero (for a methylation track, `--as level`: left out); and a '
-                   'methylation track without its strand signs (`unsigned`). It needs pyBigWig and numpy, which '
+                   'methylation track without its strand signs (`unsigned`); and the heatmap, drawn by deepTools’ '
+                   'plotHeatmap with the tracks’ names turned 45 degrees (`heatmap`). It needs pyBigWig and numpy, which '
                    'come with deepTools.']
     readme += ['',
                '## Run', '', 'In a folder with the inputs and these files:', '', '```sh', 'sh run.sh', '```', '',
