@@ -191,22 +191,45 @@ def expression_groups(expression: List[Optional[float]], groups: int) -> List[Op
     return out
 
 
+def _ranks(values):
+    """Ranks from 1, ties sharing their mean rank (as scipy's rankdata), with numpy alone."""
+    import numpy as np
+    v = np.asarray(values, dtype=float)
+    order = np.argsort(v, kind='mergesort')
+    sorted_v = v[order]
+    ranks = np.empty(len(v))
+    i = 0
+    while i < len(v):
+        j = i
+        while j + 1 < len(v) and sorted_v[j + 1] == sorted_v[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    return ranks
+
+
+def _rho(x, y):
+    """Spearman's rho: Pearson's correlation of the ranks. None when either does not vary."""
+    import numpy as np
+    rx, ry = _ranks(x), _ranks(y)
+    if rx.std() == 0 or ry.std() == 0:
+        return None
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
 def _spearman(x, y):
-    from scipy.stats import spearmanr
     if len(x) < 3:
         return None
-    rho = spearmanr(x, y).correlation
-    return None if rho != rho else float(rho)
+    return _rho(x, y)
 
 
 def percentiles(values: List[Optional[float]]) -> List[Optional[float]]:
     """Each value's rank among those given (ties share the mean rank), from 0 (lowest) to 100 (highest)."""
-    from scipy.stats import rankdata
     have = [i for i, v in enumerate(values) if v is not None]
     out: List[Optional[float]] = [None] * len(values)
     if not have:
         return out
-    ranks = rankdata([values[i] for i in have])
+    ranks = _ranks([values[i] for i in have])
     span = max(1, len(have) - 1)
     for i, r in zip(have, ranks):
         out[i] = (r - 1) / span * 100
@@ -341,11 +364,10 @@ def _null_rho(n: int):
 def gene_correlation(meth: List[Optional[float]], expr: List[Optional[float]]):
     """
     One gene's Spearman correlation across the samples where it has both values: (rho, p, n). p is
-    two-sided: exact over every ordering of the samples for up to nine, else from scipy's t
-    approximation. None for rho where either value does not vary (it cannot rise or fall together).
+    two-sided: exact over every ordering of the samples for up to nine, else from the t
+    approximation (as scipy's spearmanr). None for rho where either value does not vary (it cannot rise or fall together).
     """
     import numpy as np
-    from scipy.stats import spearmanr
     pairs = [(m, e) for m, e in zip(meth, expr) if m is not None and e is not None]
     n = len(pairs)
     if n < 3:
@@ -354,16 +376,18 @@ def gene_correlation(meth: List[Optional[float]], expr: List[Optional[float]]):
     e = [p[1] for p in pairs]
     if len(set(m)) < 2 or len(set(e)) < 2:
         return None, None, n
-    res = spearmanr(m, e)
-    rho = float(res.correlation)
-    if rho != rho:
+    rho = _rho(m, e)
+    if rho is None:
         return None, None, n
     if n <= 9:
         null = _null_rho(n)
         # Ties make rho take values between the null's; a hair of slack keeps equal ones equal.
         p = float((len(null) - np.searchsorted(null, abs(rho) - 1e-9)) / len(null))
+    elif abs(rho) >= 1:
+        p = 0.0
     else:
-        p = float(res.pvalue)
+        from scipy.stats import t
+        p = float(2 * t.sf(abs(rho) * ((n - 2) / (1 - rho * rho)) ** 0.5, n - 2))
     return rho, p, n
 
 

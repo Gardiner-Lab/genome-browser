@@ -9,6 +9,13 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-15
+
+### Fixed
+- **0.15.0 was not built:** its tests failed where scipy is not installed. `plots.py` ranks values and works out
+  Spearman's rho with numpy alone (as scipy does, checked against it); scipy is needed only for a p-value over
+  more than nine samples, and is in the image.
+
 ## [0.15.0] - 2026-11-15
 
 ### Added
