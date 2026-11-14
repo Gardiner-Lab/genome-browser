@@ -9,6 +9,8 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-15
+
 ### Added
 - **Methylation against expression** (Analyse). Each gene's methylation level, from the methylation tracks
   ticked, over the gene or the 1 or 2 kb before it, against its expression, the mean coverage of an RNA-seq
@@ -35,6 +37,8 @@ and the project uses [semantic versioning](https://semver.org/).
   what can mislead; linked from the Analyse panel and from each result.
 
 ### Fixed
+- **The legend of a profile of expression groups covered its lines:** it is drawn below the panels now
+  (`plots.py profile`, deepTools' plotProfile with the legend moved out).
 - **Grouping a heatmap's rows into clusters failed** ("length new labels != length original labels"):
   plotHeatmap was given the feature sets' names, which no longer apply once the rows are regrouped.
 

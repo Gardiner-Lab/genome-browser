@@ -21,7 +21,7 @@ each methylation track's level over it (or over the stretch before it), from two
 those with no reads, then the rest in equal-sized groups by expression. For each methylation track it
 draws the level per group (boxes), and the level against expression (each feature a point, with
 Spearman's rank correlation). It writes the table, and each group as a BED file, for a profile of
-each group (computeMatrix). With ``--ranked``, a file per methylation track ranks the genes by how
+each group (computeMatrix, then ``plots.py profile``: plotProfile with its legend below the panels). With ``--ranked``, a file per methylation track ranks the genes by how
 much more methylated than expressed they are (percentile ranks): methylated, silent genes first.
 
 ``genecorr``: several samples, each a methylation track and an RNA-seq track of the same material
@@ -43,6 +43,40 @@ def _plt():
     import matplotlib.pyplot as plt
     plt.rcParams.update({'font.size': 10, 'svg.fonttype': 'none', 'font.family': 'sans-serif'})
     return plt
+
+
+# --- deepTools' plotProfile, with its legend below ---------------------------------------------------
+
+def profile(args: List[str]) -> None:
+    """
+    deepTools' plotProfile with the same arguments, but the legend moved out of the panels into a row
+    below them: with several lines (an expression group each) it sat on top of the curves, and
+    plotProfile can only put it inside.
+    """
+    plt = _plt()
+    from deeptools import plotProfile
+    savefig = plt.savefig
+
+    def save(*a, **kw):
+        fig = plt.gcf()
+        handles, labels = [], []
+        for ax in fig.axes:
+            legend = ax.get_legend()
+            if legend is not None:
+                if not handles:
+                    handles, labels = ax.get_legend_handles_labels()
+                legend.remove()
+        if handles:
+            fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.0),
+                       ncol=min(len(labels), 3), frameon=False, fontsize=9)
+        kw['bbox_inches'] = 'tight'
+        return savefig(*a, **kw)
+
+    plt.savefig = save
+    try:
+        plotProfile.main(args)
+    finally:
+        plt.savefig = savefig
 
 
 # --- fingerprint ------------------------------------------------------------------------------
@@ -458,6 +492,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     g.add_argument('--title', default='')
     g.add_argument('--where', default='over each gene')
     g.add_argument('--summary', help='also write what was found as JSON')
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv[:1] == ['profile']:
+        # Its arguments are plotProfile's own, passed on as they are.
+        profile(argv[1:])
+        return
     a = p.parse_args(argv)
     if a.what == 'fingerprint':
         found = fingerprint(a.npz, a.out, a.metrics, a.title)

@@ -641,7 +641,8 @@ def run_methexpr(params: dict, expression: dict, tracks: List[dict], region_trac
               '--samplesLabel', *[_label(t['name']) for t in tracks], '-b', '2000', '-a', '2000', '-m', '3000',
               '-bs', '100', '-p', str(THREADS), '--skipZeros', '-o', 'groups-matrix.gz', '--quiet'],
              work, 'Computing the profile of each group', at=0.65, until=0.95, expect=n * len(tracks) * 70 * 5e-5)
-        _run(['plotProfile', '-m', 'groups-matrix.gz', '-o', 'groups-profile.svg',
+        # Through plots.py, which puts plotProfile's legend below the panels: inside, it covered the lines.
+        _plot(['profile', '-m', 'groups-matrix.gz', '-o', 'groups-profile.svg',
               '--regionsLabel', *[b['label'] for b in found['beds']], '--startLabel', 'start', '--endLabel', 'end',
               '--yAxisLabel', 'methylation level', '--plotTitle', 'Methylation along the genes of each expression group',
               '--colors', *_group_colours(found['beds'])], work, 'Drawing the profile of each group', at=0.95)
