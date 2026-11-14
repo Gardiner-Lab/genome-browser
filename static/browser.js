@@ -2031,7 +2031,8 @@
             Object.assign(body, { mode: form.elements.mode.value, before: Number(form.elements.flank.value),
                 after: Number(form.elements.flank.value), body: Number(form.elements.body.value),
                 bin: Number(form.elements.bin.value), heatmap: form.elements.heatmap.checked,
-                kmeans: Number(form.elements.kmeans.value), colormap: form.elements.colormap.value });
+                kmeans: Number(form.elements.kmeans.value), colormap: form.elements.colormap.value,
+                skip_zeros: form.elements.skip_zeros.checked, missing_as_zero: form.elements.missing_as_zero.checked });
         }
         if (kind === 'correlation') {
             if (tracks.length < 2) { formError(form, ['Tick at least two coverage tracks.']); return; }
@@ -2145,7 +2146,8 @@
         var base = ['genome-browser', state.genome.assembly_id, job.kind].join('_').replace(/[^\w.-]+/g, '_');
         var downloads = (r.files || []).filter(function (f) { return !/\.(svg|png)$/.test(f); }).map(function (f) {
             return { label: { 'matrix.gz': 'Matrix (deepTools)', 'correlation.tab': 'Correlation table', 'bins.tab': 'Values per bin',
-                'signal-per-feature.csv': 'Table (CSV)' }[f] || f, url: analysisFile(job, f), filename: f };
+                'signal-per-feature.csv': 'Table (CSV)', 'off-chromosome-ends.csv': 'Features at chromosome ends (CSV)' }[f] || f,
+                url: analysisFile(job, f), filename: f };
         });
         if (job.kind === 'compare') {
             el('analyse-result').replaceChildren(make('div', { class: 'gb-notice', text: 'Made the new track, for your lab: adding it…' }));
@@ -2176,10 +2178,7 @@
                 kind: 'analysis', svg: svg, locus: state.genome.assembly_id + ', ' + (job.kind === 'profile' ? 'profile' : 'replicate check'),
                 filename: base, selection: null, title: heading, downloads: downloads,
                 recipe: { kind: 'deeptools', jobId: job.id },
-                about: job.kind === 'profile'
-                    ? 'Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.' +
-                      (r.left_out ? ' Left out: ' + Object.keys(r.left_out).map(function (k) { return r.left_out[k].toLocaleString() + ' ' + k; }).join(', ') +
-                        ', with no signal at all within the window or shorter than one bin.' : '')
+                about: job.kind === 'profile' ? profileAbout(r)
                     : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.',
                 tracks: checkedValues(el('analyse-tracks')).map(function (id) {
                     var t = state.tracks.find(function (x) { return x.id === id; });
@@ -2189,6 +2188,28 @@
         }).catch(function (err) {
             formError(el('analyse-form'), ['The pictures could not be shown: ' + err.message]);
         });
+    }
+
+    // What a profile is the mean of: the choices made, what was left out, and the features whose window
+    // runs past a chromosome end, so whoever reads the figure can judge whether that matters.
+    function profileAbout(r) {
+        var count = function (n) { return Number(n).toLocaleString('en-US'); };
+        var parts = ['Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.'];
+        var skip = r.skip_zeros !== false, zero = r.missing_as_zero !== false;
+        if (r.left_out) {
+            parts.push('Left out: ' + Object.keys(r.left_out).map(function (k) { return count(r.left_out[k]) + ' ' + k; }).join(', ') +
+                (skip ? ', with no signal anywhere within the window, or shorter than one step.' : ', shorter than one step.'));
+        }
+        parts.push(skip ? 'Features with no signal in the window were left out.' : 'Every feature counts, with or without signal.');
+        parts.push(zero ? 'Stretches without data count as zero.'
+            : 'Stretches without data are left out of the mean, and black in the heatmap.');
+        if (r.off_end && r.off_end.count) {
+            var shown = r.off_end.features.slice(0, 6).join(', ') + (r.off_end.count > 6 ? ', …' : '');
+            parts.push('Note: the window of ' + count(r.off_end.count) + (r.off_end.count === 1 ? ' feature runs' : ' features run') +
+                ' past the end of a chromosome (' + shown + '). There is no genome there, so those steps ' +
+                (zero ? 'count as zero' : 'are left out') + ' for them. See “Features at chromosome ends” to judge whether it matters.');
+        }
+        return parts.join(' ');
     }
 
     // A new track from a comparison: list it, and show it in the view.

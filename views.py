@@ -931,6 +931,14 @@ def _browser_html(static_prefix: str) -> str:
           </select>
         </label>
       </div>
+      <div data-for="profile" class="gb-circos-row">
+        <label class="gb-check" title="deepTools --skipZeros. Ticked, the profile is the mean over features with some signal near them, and the label says how many were left out; unticked, every feature counts, and those without signal are rows of zero at the foot of the heatmap.">
+          <input type="checkbox" name="skip_zeros" checked> Leave out features with no signal anywhere in the window</label>
+        <label class="gb-check" title="deepTools --missingDataAsZero. A coverage track has no data where nothing was read: ticked, that counts as zero; unticked, it is left out of the mean and drawn black in the heatmap.">
+          <input type="checkbox" name="missing_as_zero" checked> Count stretches without data as zero</label>
+      </div>
+      <p data-for="profile" class="gb-hint">Either choice changes the mean: say which you used when you report a profile.
+        Both are in the recipe that comes with the figure.</p>
       <div data-for="compare">
         <div class="gb-circos-row">
           <label class="gb-field">Track A <select id="analyse-a"></select></label>

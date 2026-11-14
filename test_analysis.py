@@ -137,12 +137,62 @@ def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
     monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
     monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
+    monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
     analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
                          [{'file_path': 'wt.bw', 'name': 'WT'}], {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}},
                          tmp_path)
     compute = next(a for a in runs if a[0] == 'computeMatrix')
     assert '--missingDataAsZero' in compute
     assert [a[0] for a in runs] == ['computeMatrix', 'plotProfile', 'plotHeatmap']
+
+
+def test_profile_choices_reach_compute_matrix(monkeypatch, tmp_path):
+    def run_with(**choices):
+        runs = []
+        monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
+        monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
+        monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
+        monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
+        out = analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], **choices},
+                                   [{'file_path': 'wt.bw', 'name': 'WT'}],
+                                   {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}}, tmp_path)
+        return next(a for a in runs if a[0] == 'computeMatrix'), out
+    args, out = run_with()                                   # as before they could choose: both on
+    assert '--skipZeros' in args and '--missingDataAsZero' in args
+    assert out['skip_zeros'] is True and out['missing_as_zero'] is True
+    args, out = run_with(skip_zeros=False, missing_as_zero=False)
+    assert '--skipZeros' not in args and '--missingDataAsZero' not in args
+    assert out['skip_zeros'] is False and out['missing_as_zero'] is False
+    args, _ = run_with(skip_zeros=False, missing_as_zero=True)
+    assert '--skipZeros' not in args and '--missingDataAsZero' in args
+
+
+def test_features_whose_window_runs_off_a_chromosome_end(tmp_path):
+    pyBigWig = pytest.importorskip('pyBigWig')
+    import gzip
+    bw = pyBigWig.open(str(tmp_path / 't.bw'), 'w')
+    bw.addHeader([('Chr1', 10_000)])
+    bw.addEntries(['Chr1'], [0], ends=[10_000], values=[1.0])
+    bw.close()
+    with gzip.open(tmp_path / 'matrix.gz', 'wt') as fh:
+        fh.write('@{"group_boundaries": [0, 4]}\n')
+        for row in (('Chr1', 500, 1500, 'NEAR_START', '+'), ('Chr1', 4000, 6000, 'MIDDLE', '+'),
+                    ('Chr1', 9000, 9800, 'MINUS_NEAR_END', '-'), ('Chr1', 300, 2500, 'MINUS_NEAR_START', '-')):
+            fh.write('\t'.join(map(str, row[:4])) + '\t0\t' + row[4] + '\t1\t1\n')
+    tracks = [{'file_path': str(tmp_path / 't.bw')}]
+
+    def off(mode, before=2000, after=1000):
+        return {r[0]: (r[5], r[6]) for r in analysis._off_chromosome_ends(tmp_path / 'matrix.gz', tracks, mode, before, after)}
+
+    # Chr1 is 10 kb; 2 kb before and 1 kb after each feature, read along its own strand.
+    # Scaled: + spans [start - 2000, end + 1000]; - spans [start - 1000, end + 2000].
+    assert off('scale') == {'NEAR_START': (1500, 0), 'MINUS_NEAR_END': (0, 1800), 'MINUS_NEAR_START': (700, 0)}
+    # Around the start (TSS): a - feature starts at its end coordinate, [end - 1000, end + 2000].
+    assert off('start') == {'NEAR_START': (1500, 0), 'MINUS_NEAR_END': (0, 1800)}
+    # Around the end (TES): + at its end, [end - 2000, end + 1000]; - at its start, [start - 1000, start + 2000].
+    assert off('end') == {'NEAR_START': (500, 0), 'MINUS_NEAR_END': (0, 1000), 'MINUS_NEAR_START': (700, 0)}
+    # Short flanks: nothing runs off.
+    assert off('scale', before=200, after=200) == {}
 
 
 def test_profile_label_counts_the_features_drawn(monkeypatch, tmp_path):
@@ -157,6 +207,7 @@ def test_profile_label_counts_the_features_drawn(monkeypatch, tmp_path):
             with gzip.open(tmp_path / 'matrix.gz', 'wt') as fh:
                 fh.write('@' + json.dumps({'group_boundaries': [0, 31, 71]}) + '\n')
     monkeypatch.setattr(analysis, '_run', fake_run)
+    monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
     out = analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}, {'track': 'g', 'type': 'transposable_element'}]},
                                [{'file_path': 'wt.bw', 'name': 'WT'}],
                                {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}}, tmp_path)

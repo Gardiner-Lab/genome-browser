@@ -207,13 +207,18 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     before, after = (int(_clamp(params.get(k), 0, 20000, 2000)) for k in ('before', 'after'))
     body = int(_clamp(params.get('body'), 500, 20000, 3000))
     binsize = int(_clamp(params.get('bin'), 10, 5000, 100))
-    # A coverage track has no entries where nothing was read, so without --missingDataAsZero those
-    # bins are NaN: plotHeatmap paints them black and plotProfile leaves them out of the mean.
+    # The member's two choices, each on unless turned off (as every profile was before they could choose).
+    # --skipZeros leaves out features with no signal anywhere in the window. --missingDataAsZero counts
+    # stretches a track has no data for as zero; without it they are NaN, which plotHeatmap paints
+    # black and plotProfile leaves out of the mean.
+    skip_zeros = params.get('skip_zeros') is not False
+    missing_as_zero = params.get('missing_as_zero') is not False
     args = ['computeMatrix', 'scale-regions' if mode == 'scale' else 'reference-point',
             '-S', *[t['file_path'] for t in tracks], '-R', *[str(s) for s in sets],
             '--samplesLabel', *[_label(t['name']) for t in tracks],
-            '-b', str(before), '-a', str(after), '-bs', str(binsize), '-p', str(THREADS), '--skipZeros',
-            '--missingDataAsZero', '-o', 'matrix.gz', '--quiet']
+            '-b', str(before), '-a', str(after), '-bs', str(binsize), '-p', str(THREADS),
+            *(['--skipZeros'] if skip_zeros else []), *(['--missingDataAsZero'] if missing_as_zero else []),
+            '-o', 'matrix.gz', '--quiet']
     if mode == 'scale':
         args += ['-m', str(body)]
     else:
@@ -250,9 +255,54 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
             heat_args += ['--kmeans', str(k)]
         _run(heat_args, work, 'Drawing the heatmap')
         files.insert(1, 'heatmap.png')
-    out = {'files': files, 'regions': labels}
+    out = {'files': files, 'regions': labels, 'skip_zeros': skip_zeros, 'missing_as_zero': missing_as_zero}
     if left_out:
         out['left_out'] = left_out
+    # Features whose window runs past a chromosome end have bins with no genome under them: those count
+    # as zero (or are left out, without --missingDataAsZero) like any stretch without reads. Usually a
+    # handful; they are listed so the member can judge whether it matters for theirs.
+    off = _off_chromosome_ends(work / 'matrix.gz', tracks, mode, before, after)
+    if off:
+        with open(work / 'off-chromosome-ends.csv', 'w', newline='', encoding='utf-8') as fh:
+            w = csv.writer(fh)
+            w.writerow(['name', 'chrom', 'start', 'end', 'strand', 'bases_past_start', 'bases_past_end'])
+            w.writerows(off)
+        files.append('off-chromosome-ends.csv')
+        out['off_end'] = {'count': len(off), 'features': [r[0] for r in off[:20]]}
+    return out
+
+
+def _off_chromosome_ends(matrix: Path, tracks: List[dict], mode: str, before: int, after: int) -> List[list]:
+    """The drawn features whose window (the flanks, by strand) runs past either end of its chromosome."""
+    import gzip
+    import pyBigWig
+    sizes: Dict[str, int] = {}
+    for t in tracks:
+        bw = pyBigWig.open(t['file_path'])
+        try:
+            for c, n in (bw.chroms() or {}).items():
+                sizes[c] = min(n, sizes.get(c, n))
+        finally:
+            bw.close()
+    out = []
+    with gzip.open(matrix, 'rt', encoding='utf-8') as fh:
+        for line in fh:
+            if line.startswith('@'):
+                continue
+            f = line.split('	', 6)
+            chrom, s, e, name, strand = f[0], int(f[1]), int(f[2]), f[3], f[5]
+            if chrom not in sizes:
+                continue
+            minus = strand == '-'
+            if mode == 'scale':
+                left, right = (s - after, e + before) if minus else (s - before, e + after)
+            else:
+                # The reference point: a feature's start (TSS) or end (TES), by its strand.
+                at = (e if minus else s) if mode == 'start' else (s if minus else e)
+                left, right = (at - after, at + before) if minus else (at - before, at + after)
+            past_start, past_end = max(0, -left), max(0, right - sizes[chrom])
+            if past_start or past_end:
+                out.append([name, chrom, s + 1, e, strand, past_start, past_end])
     return out
 
 
@@ -592,7 +642,8 @@ def register_analysis(app) -> None:
             tracks = [str(t) for t in (body.get('tracks') or []) if t][:MAX_TRACKS]
             sets = [r for r in (body.get('regions') or []) if isinstance(r, dict)][:MAX_REGION_SETS]
             params = {k: body.get(k) for k in ('mode', 'before', 'after', 'body', 'bin', 'heatmap', 'kmeans',
-                                                'colormap', 'title', 'method', 'operation', 'pseudocount', 'name')}
+                                                'colormap', 'title', 'method', 'operation', 'pseudocount', 'name',
+                                                'skip_zeros', 'missing_as_zero')}
             params['tracks'] = tracks
             params['regions'] = [{'track': str(r.get('track') or ''), 'type': str(r.get('type') or '')[:80] or None,
                                   'names': [str(n)[:80] for n in (r.get('names') or [])][:5000]} for r in sets]
