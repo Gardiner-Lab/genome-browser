@@ -880,7 +880,8 @@ def _browser_html(static_prefix: str) -> str:
       <label class="gb-field">What to draw
         <select id="analyse-kind" name="kind"></select>
       </label>
-      <p class="gb-hint" id="analyse-about"></p>
+      <p class="gb-hint"><span id="analyse-about"></span>
+        <a id="analyse-help" href="{prefix}/help#reading" target="_blank" rel="noopener">What it tells you, and how to read it</a></p>
       <label class="gb-field">Title <span class="gb-hint">(optional)</span>
         <input name="title" maxlength="100">
       </label>
@@ -1023,6 +1024,19 @@ def _browser_html(static_prefix: str) -> str:
         <label class="gb-check"><input type="checkbox" name="me_profile" checked> A profile of each expression group
           too (methylation along the genes, one line a group; a few minutes more)</label>
       </div>
+      <div data-for="genecorr">
+        <h3 class="gb-share-h">Samples <span class="gb-hint">(each a methylation track and the RNA-seq track of the
+          same material: WT and mutants, tissues, time points; at least three, five or more for a p-value to mean much)</span></h3>
+        <div id="analyse-pairs" class="gb-analyse-pairs"></div>
+        <button type="button" class="tt-btn" id="analyse-pair-add">Add a sample</button>
+        <label class="gb-field">Methylation
+          <select name="gc_region">
+            <option value="body" selected>Over the gene (its body)</option>
+            <option value="up1000">Over the 1 kb before it (promoter)</option>
+            <option value="up2000">Over the 2 kb before it</option>
+          </select>
+        </label>
+      </div>
       <p data-for="selection" class="gb-hint">Selection: <b id="analyse-selection-text"></b></p>
       <label data-for="links" class="gb-field">Links track
         <select id="analyse-links-track"></select>
@@ -1095,6 +1109,7 @@ def _browser_html(static_prefix: str) -> str:
     <form method="dialog" id="figure-form" novalidate>
       <h2 id="figure-dialog-title">Save this view as a figure</h2>
       <p class="gb-hint" id="figure-what">Exactly what is on screen: the tracks, the position and any selection.</p>
+      <p class="gb-hint" id="figure-help-line" hidden><a id="figure-help" target="_blank" rel="noopener">How to read this figure</a></p>
       <div class="gb-figure-preview"><img id="figure-preview" alt="The figure as it will be saved"></div>
       <label class="gb-field">Page title
         <input name="title" maxlength="200">

@@ -237,3 +237,104 @@ def test_methylation_against_expression(world, tmp_path):
     shutil.copy(w['root'] / 'tracks' / 'cg.bw', tmp_path / 'CG.bw')
     subprocess.run(['sh', 'run.sh'], cwd=tmp_path, check=True, capture_output=True)
     assert (tmp_path / 'methylation-vs-expression.csv').read_text().splitlines() == table
+
+
+# --- ranked genes, and per gene across samples -------------------------------------------------------
+
+def test_percentiles_and_the_ranked_file(tmp_path):
+    assert plots.percentiles([5, None, 1, 3]) == [100, None, 0, 50]
+    assert plots.percentiles([2, 2, 1]) == [75, 75, 0]                     # ties share their rank
+    bed = [['Chr1', str(i * 10), str(i * 10 + 5), f'G{i}', '0', '+'] for i in range(4)]
+    expr = [0.0, 10.0, 5.0, 1.0]
+    level = [0.9, 0.0, 0.5, None]
+    path = tmp_path / 'r.csv'
+    assert plots.write_ranked(str(path), bed, expr, level, [0, 2, 1, 1], ['no reads', 'low', 'high']) == 3
+    rows = path.read_text().splitlines()
+    assert rows[0].startswith('rank,name,') and rows[0].endswith('methylated_minus_expressed,expression_group')
+    # G0: most methylated, least expressed, first; G1: unmethylated, most expressed, last; G3 has no level.
+    assert [r.split(',')[1] for r in rows[1:]] == ['G0', 'G2', 'G1']
+    assert rows[1].split(',')[-2:] == ['100.0', 'no reads'] and rows[3].split(',')[-2] == '-100.0'
+
+
+def test_one_genes_correlation_across_samples():
+    rho, p, n = plots.gene_correlation([0.9, 0.7, 0.5, 0.3], [1, 2, 3, 4])
+    assert rho == pytest.approx(-1) and n == 4 and p == pytest.approx(2 / 24)   # exact: 2 of the 24 orderings
+    rho, p, n = plots.gene_correlation([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], [1, 2, 3, 4, 5, 6])
+    assert rho == pytest.approx(1) and p == pytest.approx(2 / 720)
+    assert plots.gene_correlation([0.5, 0.5, 0.5, 0.5], [1, 2, 3, 4])[0] is None     # methylation never moves
+    assert plots.gene_correlation([0.5, None, 0.2], [1, 2, 3]) == (None, None, 2)    # too few samples with both
+    rho, p, _ = plots.gene_correlation([0.4, 0.1, 0.3, 0.2, 0.5], [3, 1, 5, 2, 4])
+    assert -1 < rho < 1 and 0 < p <= 1
+    assert plots.bh([0.01, None, 0.04, 0.03]) == pytest.approx([0.03, None, 0.04, 0.04])
+
+
+SAMPLES = 5
+
+
+def _samples_world(w):
+    """Five samples on the 36 genes: gene i's expression rises over the samples when i is even, and its
+    methylation falls (a negative correlation); when i is odd both rise; every third gene never varies."""
+    ids = _genes_world(w)
+    root = w['root'] / 'tracks'
+    conn = db.connect(w['root'] / 'genome.db')
+    pairs = []
+    for s in range(SAMPLES):
+        rna, cg = root / f'rna{s}.bw', root / f'cg{s}.bw'
+        bw = pyBigWig.open(str(rna), 'w')
+        bw.addHeader([('Chr1', 20000), ('Chr2', 10000)])
+        starts = [1000 + i * 500 for i in range(N_GENES)]
+        bw.addEntries(['Chr1'] * N_GENES, starts, ends=[x + 300 for x in starts],
+                      values=[5.0 if i % 3 == 0 else 1.0 + s * (i + 1) for i in range(N_GENES)])
+        bw.close()
+        bw = pyBigWig.open(str(cg), 'w')
+        bw.addHeader([('Chr1', 20000), ('Chr2', 10000)])
+        cs, vs = [], []
+        for i in range(N_GENES):
+            level = 0.5 if i % 3 == 0 else (0.8 - 0.1 * s if i % 2 == 0 else 0.2 + 0.1 * s)
+            for c in range(1000 + i * 500, 1300 + i * 500, 20):
+                cs += [c, c + 1]
+                vs += [level, -level]
+        bw.addEntries(['Chr1'] * len(cs), cs, ends=[c + 1 for c in cs], values=vs)
+        bw.close()
+        m_id, e_id = uuid.uuid4().hex, uuid.uuid4().hex
+        conn.executemany('INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, file_path, '
+                         "created_by) VALUES (?, ?, ?, 'bigwig', 'labA', 'lab_only', 'ready', ?, 'alice')",
+                         [(m_id, w['genome'], f'CG s{s}', str(cg)), (e_id, w['genome'], f'RNA s{s}', str(rna))])
+        pairs.append({'methylation': m_id, 'expression': e_id, 'label': f'S{s}'})
+    conn.commit()
+    conn.close()
+    return ids, pairs
+
+
+@pytest.mark.skipif(not HAS_DEEPTOOLS, reason='deepTools is not installed here (it is in the image)')
+def test_methylation_and_expression_per_gene_across_samples(world, tmp_path):
+    w = world
+    ids, pairs = _samples_world(w)
+    regions = [{'track': ids['many'], 'type': 'gene'}]
+    path = f"/api/genomes/{w['genome']}/analyses"
+    assert w['call']('POST', path, 'alice', {'kind': 'genecorr', 'pairs': pairs[:2], 'regions': regions}).status_code == 400
+    swapped = [{'methylation': p['expression'], 'expression': p['methylation']} for p in pairs]
+    res = w['call']('POST', path, 'alice', {'kind': 'genecorr', 'pairs': swapped, 'regions': regions})
+    _run_queue(w)
+    failed = w['call']('GET', f"/api/analyses/{res.get_json()['id']}").get_json()
+    assert failed['state'] == 'failed' and 'not a methylation track' in failed['error']
+
+    job = _done(w, {'kind': 'genecorr', 'pairs': pairs, 'regions': regions})
+    r = job['result']
+    assert r['samples'] == ['S0', 'S1', 'S2', 'S3', 'S4'] and r['count'] == N_GENES
+    assert r['tested'] == 24 and r['smallest_p_possible'] == pytest.approx(2 / 120)
+    assert r['most_negative'][0]['rho'] == pytest.approx(-1) and r['most_positive'][0]['rho'] == pytest.approx(1)
+    rows = list(csv.DictReader(io.StringIO(_file(w, job, 'per-gene-correlation.csv').get_data(as_text=True))))
+    assert [row['rank'] for row in rows[:3]] == ['1', '2', '3']
+    negative = {row['name'] for row in rows if row['spearman_rho'] and float(row['spearman_rho']) < 0}
+    assert negative == {f'G{i}' for i in range(N_GENES) if i % 3 and i % 2 == 0}
+    assert all(not row['spearman_rho'] for row in rows[24:])                    # the genes that never vary, last
+    assert float(rows[0]['p']) == pytest.approx(2 / 120, rel=1e-3) and rows[0]['methylation S0'] == '0.8'
+    assert b'<svg' in _file(w, job, 'genecorr.svg').data
+
+    # The ranked file of the one-sample analysis.
+    one = _done(w, {'kind': 'methexpr', 'tracks': [ids['cg']], 'expression': ids['rna'], 'regions': regions,
+                    'group_profile': False})
+    assert one['result']['ranked'] == [{'track': 'CG', 'file': 'ranked-1.csv', 'genes': N_GENES}]
+    ranked = _file(w, one, 'ranked-1.csv').get_data(as_text=True).splitlines()
+    assert ranked[1].split(',')[1] in {f'G{i}' for i in range(0, N_GENES, 3)}       # unread and methylated: first

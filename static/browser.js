@@ -1693,6 +1693,8 @@
             : 'Exactly what is on screen: the tracks, the position and any selection.';
         el('figure-circos-files').hidden = !fig.bundle;
         if (fig.kind === 'analysis') { el('figure-what').textContent = fig.about || ''; }
+        el('figure-help-line').hidden = !fig.reading;
+        if (fig.reading) { el('figure-help').href = readingLink(fig.reading); }
         var dl = el('figure-downloads');
         dl.replaceChildren.apply(dl, (fig.downloads || []).map(function (d) {
             return make('a', { class: 'gb-link', href: d.url, download: d.filename, text: d.label });
@@ -1913,6 +1915,11 @@
                    'lowest to highest expression. Box plots of methylation per group, every gene as a point with ' +
                    'Spearman’s correlation, a table of every gene, and a profile of each group.',
             needs: ['tracks', 'features', 'methexpr'] },
+        genecorr: { label: 'Methylation and expression per gene, across samples (ranked)',
+            about: 'Several samples, each a methylation track and the RNA-seq track of the same material. For each gene, ' +
+                   'how its methylation and its expression rise and fall together across the samples (Spearman’s ρ, ' +
+                   'with a p-value and a q-value), and every gene ranked from the most negative to the most positive.',
+            needs: ['features', 'genecorr'] },
         genes: { label: 'Signal per feature (a table)',
             about: 'The mean signal of each coverage track over every feature of a type (for example each gene), ' +
                    'as a CSV table to sort and filter. With two tracks, their difference too.',
@@ -1925,6 +1932,45 @@
                    'to the other, so collinear blocks show as diagonals.',
             needs: ['links'] }
     };
+
+    // Each analysis's part of Help's "Reading the analyses".
+    var READING = { profile: 'read-profile', compare: 'read-compare', correlation: 'read-correlation', genes: 'read-genes',
+        bars: 'read-bars', dotplot: 'read-dotplot', fingerprint: 'read-fingerprint', methexpr: 'read-methexpr',
+        genecorr: 'read-genecorr' };
+
+    // A sample for the per-gene correlation: a methylation track, the RNA-seq track of the same material, a name.
+    function addPairRow(methId, exprId) {
+        var coverage = genomeTracks('bigwig');
+        var meth = coverage.filter(function (t) { return t.signal === 'methylation'; });
+        var expr = coverage.filter(function (t) { return t.signal !== 'methylation'; });
+        var options = function (list) {
+            return list.length ? list.map(function (t) { return make('option', { value: t.id, text: t.name }); })
+                : [make('option', { value: '', text: 'none on this genome' })];
+        };
+        var m = make('select', { class: 'gb-pair-meth', 'aria-label': 'Methylation track' }, options(meth));
+        var e = make('select', { class: 'gb-pair-expr', 'aria-label': 'RNA-seq track' }, options(expr));
+        if (methId) { m.value = methId; }
+        if (exprId) { e.value = exprId; }
+        var label = make('input', { class: 'gb-pair-label', maxlength: '40', placeholder: 'name (optional)', 'aria-label': 'Sample name' });
+        var remove = make('button', { type: 'button', class: 'tt-btn danger-quiet', text: 'Remove' });
+        var row = make('div', { class: 'gb-circos-row gb-pair' }, [
+            make('label', { class: 'gb-field' }, [document.createTextNode('Methylation '), m]),
+            make('label', { class: 'gb-field' }, [document.createTextNode('Expression '), e]),
+            make('label', { class: 'gb-field' }, [document.createTextNode('Sample '), label]), remove]);
+        remove.addEventListener('click', function () { row.remove(); });
+        el('analyse-pairs').appendChild(row);
+    }
+
+    function pairRows() {
+        return Array.prototype.map.call(el('analyse-pairs').querySelectorAll('.gb-pair'), function (row) {
+            return { methylation: row.querySelector('.gb-pair-meth').value, expression: row.querySelector('.gb-pair-expr').value,
+                     label: row.querySelector('.gb-pair-label').value.trim() };
+        });
+    }
+
+    function readingLink(kind) {
+        return PREFIX + '/help#' + (READING[kind] || 'reading');
+    }
 
     function genomeTracks(type) {
         return (state.tracks || []).filter(function (t) {
@@ -1969,6 +2015,13 @@
         linkSelect.replaceChildren.apply(linkSelect, links.length ? links.map(function (t) {
             return make('option', { value: t.id, text: t.name });
         }) : [make('option', { value: '', text: 'No links (BEDPE) tracks on this genome' })]);
+        // Three empty samples to start, the n-th methylation and RNA-seq tracks in each.
+        el('analyse-pairs').replaceChildren();
+        var methTracks = coverage.filter(function (t) { return t.signal === 'methylation'; });
+        var exprTracks = coverage.filter(function (t) { return t.signal !== 'methylation'; });
+        for (var p = 0; p < 3; p++) {
+            addPairRow((methTracks[p] || methTracks[0] || {}).id, (exprTracks[p] || exprTracks[0] || {}).id);
+        }
         // The expression track: the first that is not a methylation track.
         var exprSelect = el('analyse-expression');
         var notMeth = coverage.filter(function (t) { return t.signal !== 'methylation'; });
@@ -1996,12 +2049,13 @@
         state.analyseKind = kind;
         var needs = ANALYSES[kind].needs;
         el('analyse-about').textContent = ANALYSES[kind].about;
+        el('analyse-help').href = readingLink(kind);
         Array.prototype.forEach.call(document.querySelectorAll('#analyse-form [data-for]'), function (part) {
             part.hidden = part.getAttribute('data-for').split(' ').every(function (n) { return needs.indexOf(n) < 0 && n !== kind; });
         });
         el('analyse-type-hint').textContent = kind === 'genes'
             ? 'Tick one type: each feature of it is a row of the table.'
-            : kind === 'methexpr' ? 'Tick one type: the genes.'
+            : kind === 'methexpr' || kind === 'genecorr' ? 'Tick one type: the genes.'
             : 'Tick up to four: each is drawn as its own line (genes and transposons, for example).';
         if (kind === 'methexpr') {
             // Methylation tracks ticked, the rest not.
@@ -2052,10 +2106,10 @@
         if (kind === 'dotplot') { return drawDotPlot(el('analyse-links-track').value); }
 
         var body = { kind: kind, tracks: tracks, title: form.elements.title.value.trim() };
-        if (kind === 'profile' || kind === 'genes' || kind === 'methexpr') {
+        if (kind === 'profile' || kind === 'genes' || kind === 'methexpr' || kind === 'genecorr') {
             if (!featureTrack || !types.length) { formError(form, ['Choose the features: a track and at least one type.']); return; }
             if (kind === 'genes' && types.length > 1) { formError(form, ['For a table, tick one feature type.']); return; }
-            if (kind === 'methexpr' && types.length > 1) { formError(form, ['Tick one feature type: the genes.']); return; }
+            if ((kind === 'methexpr' || kind === 'genecorr') && types.length > 1) { formError(form, ['Tick one feature type: the genes.']); return; }
             if (types.length > 4) { formError(form, ['Tick at most four feature types.']); return; }
             body.regions = types.map(function (t) { return { track: featureTrack, type: t, names: names }; });
         }
@@ -2075,6 +2129,14 @@
             if (!body.expression) { formError(form, ['Choose the expression track: an RNA-seq coverage track.']); return; }
             if (tracks.indexOf(body.expression) >= 0) { formError(form, ['Untick the expression track among the methylation tracks.']); return; }
         }
+        if (kind === 'genecorr') {
+            var pairs = pairRows();
+            if (pairs.length < 3) { formError(form, ['Pair at least three samples.']); return; }
+            if (pairs.some(function (p) { return !p.methylation || !p.expression; })) {
+                formError(form, ['Each sample needs a methylation track and an RNA-seq track.']); return;
+            }
+            Object.assign(body, { pairs: pairs, region: form.elements.gc_region.value, tracks: [] });
+        }
         if (kind === 'correlation') {
             if (tracks.length < 2) { formError(form, ['Tick at least two coverage tracks.']); return; }
             Object.assign(body, { method: form.elements.method.value, bin: Number(form.elements.corr_bin.value) });
@@ -2085,7 +2147,7 @@
                 name: form.elements.track_name.value.trim(), tracks: [] });
             if (body.a === body.b) { formError(form, ['Choose two different tracks.']); return; }
         }
-        if (kind !== 'compare' && !tracks.length) { formError(form, ['Tick at least one coverage track.']); return; }
+        if (kind !== 'compare' && kind !== 'genecorr' && !tracks.length) { formError(form, ['Tick at least one coverage track.']); return; }
 
         el('analyse-run').disabled = true;
         el('analyse-status').textContent = 'Starting…';
@@ -2187,11 +2249,15 @@
         var base = ['genome-browser', state.genome.assembly_id, job.kind].join('_').replace(/[^\w.-]+/g, '_');
         var downloads = (r.files || []).filter(function (f) { return !/\.(svg|png)$/.test(f); }).map(function (f) {
             var cluster = /^cluster-(\d+)\.txt$/.exec(f);
-            return { label: cluster ? 'Cluster ' + cluster[1] + ' (names)' : { 'matrix.gz': 'Matrix (deepTools)',
+            var ranked = /^ranked-(\d+)\.csv$/.exec(f);
+            var rankedOf = ranked && (r.ranked || [])[Number(ranked[1]) - 1];
+            return { label: cluster ? 'Cluster ' + cluster[1] + ' (names)'
+                : ranked ? 'Genes ranked' + (rankedOf ? ', ' + rankedOf.track : '') + ' (CSV)' : { 'matrix.gz': 'Matrix (deepTools)',
                 'correlation.tab': 'Correlation table', 'bins.tab': 'Values per bin',
                 'signal-per-feature.csv': 'Table (CSV)', 'off-chromosome-ends.csv': 'Features at chromosome ends (CSV)',
                 'clusters.csv': 'Clusters (CSV)', 'fingerprint-metrics.tab': 'Fingerprint numbers',
-                'methylation-vs-expression.csv': 'Every gene (CSV)', 'groups-matrix.gz': 'Group matrix (deepTools)' }[f] || f,
+                'methylation-vs-expression.csv': 'Every gene (CSV)', 'groups-matrix.gz': 'Group matrix (deepTools)',
+                'per-gene-correlation.csv': 'Genes ranked by correlation (CSV)' }[f] || f,
                 url: analysisFile(job, f), filename: f };
         });
         if (job.kind === 'compare') {
@@ -2218,9 +2284,10 @@
         var pictures = (r.files || []).filter(function (f) { return /\.(svg|png)$/.test(f); });
         var heading = title || (job.kind === 'profile' ? 'Profile' + ((r.regions || []).length ? ': ' + r.regions.join(', ') : '')
             : job.kind === 'fingerprint' ? 'Fingerprint' : job.kind === 'methexpr' ? 'Methylation against expression'
+            : job.kind === 'genecorr' ? 'Methylation and expression per gene'
             : 'Replicate check');
         var about = job.kind === 'profile' ? profileAbout(r) : job.kind === 'fingerprint' ? fingerprintAbout(r)
-            : job.kind === 'methexpr' ? methexprAbout(r)
+            : job.kind === 'methexpr' ? methexprAbout(r) : job.kind === 'genecorr' ? genecorrAbout(r)
             : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.';
         composeFigure(pictures.map(function (f) { return analysisFile(job, f); }), heading).then(function (svg) {
             el('analyse-dialog').close();
@@ -2229,6 +2296,7 @@
                 filename: base, selection: null, title: heading, downloads: downloads,
                 recipe: { kind: 'deeptools', jobId: job.id },
                 about: about + methylationNote(r),
+                reading: job.kind,
                 actions: (r.clusters || []).map(function (c) {
                     return { label: 'Keep cluster ' + c.cluster + ' as a track', run: function (button) { keepCluster(job, c, button); } };
                 }),
@@ -2296,7 +2364,28 @@
                 (t.rho_expressed === null || t.rho_expressed === undefined ? '' : ' (expressed genes only ' + t.rho_expressed.toFixed(2) + ')') +
                 ' over ' + count(t.n) + ' genes.');
         });
+        if ((r.ranked || []).length) {
+            parts.push('“Genes ranked” (one file per methylation track): every gene by how much more methylated than ' +
+                'expressed it is, as percentile ranks; methylated, silent genes first, unmethylated, highly expressed genes last.');
+        }
         if (r.no_expression_value) { parts.push(count(r.no_expression_value) + ' genes are on chromosomes the expression track does not have.'); }
+        return parts.join(' ');
+    }
+
+    function genecorrAbout(r) {
+        var count = function (n) { return Number(n).toLocaleString('en-US'); };
+        var name = function (g) { return g.name + ' (ρ ' + g.rho.toFixed(2) + ')'; };
+        var parts = [count(r.count) + ' genes over ' + r.samples.length + ' samples (' + r.samples.join(', ') + '). For each ' +
+            'gene, Spearman’s ρ between its methylation (' + r.where + ') and its expression across the samples: ' +
+            count(r.tested) + ' genes vary in both and were tested.'];
+        if (r.smallest_p_possible) {
+            parts.push('With ' + r.samples.length + ' samples no p-value can be below ' + Number(r.smallest_p_possible.toPrecision(2)) +
+                ', whatever the gene.');
+        }
+        parts.push(count(r.significant) + ' have q < 0.05 (Benjamini-Hochberg, over the genes tested).');
+        if ((r.most_negative || []).length) { parts.push('Most negative: ' + r.most_negative.slice(0, 5).map(name).join(', ') + '.'); }
+        if ((r.most_positive || []).length) { parts.push('Most positive: ' + r.most_positive.slice(0, 5).map(name).join(', ') + '.'); }
+        parts.push('Download the ranked table for every gene.');
         return parts.join(' ');
     }
 
@@ -2398,7 +2487,8 @@
             });
             parts.push('</svg>');
             el('analyse-dialog').close();
-            openFigureDialog({ kind: 'analysis', svg: parts.join(''), locus: where, filename: 'selection-means_' + where.replace(/[^\w.-]+/g, '_'),
+            openFigureDialog({ kind: 'analysis', reading: 'bars', svg: parts.join(''), locus: where,
+                filename: 'selection-means_' + where.replace(/[^\w.-]+/g, '_'),
                 selection: sel, title: title,
                 about: 'The mean of each coverage track over the selection.' + methylationNote({
                     methylation: rows.filter(function (t) { return t.signal === 'methylation'; }).map(function (t) { return t.name; })
@@ -2478,7 +2568,7 @@
                 '<g stroke="#ccc" stroke-width="1">' + grid.join('') + '</g>' + labels.join('') +
                 '<g stroke="' + escapeHtml(colour) + '" stroke-width="2" stroke-linecap="round">' + lines.join('') + '</g></svg>';
             el('analyse-dialog').close();
-            openFigureDialog({ kind: 'analysis', svg: svg, locus: 'whole genome', filename: 'dotplot_' + t.name.replace(/[^\w.-]+/g, '_'),
+            openFigureDialog({ kind: 'analysis', reading: 'dotplot', svg: svg, locus: 'whole genome', filename: 'dotplot_' + t.name.replace(/[^\w.-]+/g, '_'),
                 selection: null, title: title,
                 recipe: { kind: 'dotplot', trackId: trackId, colour: colour, chroms: chroms },
                 about: n.toLocaleString('en-US') + ' links drawn, each both ways round' +
@@ -3668,6 +3758,9 @@
     }, true);
     el('igv-container').addEventListener('mousedown', onMouseDownCapture, true);
     el('select-mode').addEventListener('click', function () { setSelectMode(!state.selectMode); });
+    el('analyse-pair-add').addEventListener('click', function () {
+        if (el('analyse-pairs').children.length < 12) { addPairRow(); }
+    });
     el('select-form').addEventListener('submit', selectTyped);
     // Escape leaves Select mode, then clears the selection.
     document.addEventListener('keydown', function (e) {

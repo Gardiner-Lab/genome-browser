@@ -64,6 +64,7 @@ def help_html(static_prefix: str, prefix: str) -> str:
       <a href="#figure">Saving a figure</a>
       <a href="#circos">Circos plots</a>
       <a href="#analyse">Analyse: profiles, heatmaps, comparisons</a>
+      <a href="#reading">Reading the analyses</a>
       <a href="#genome">Adding a genome</a>
       <a href="#track">Adding tracks</a>
       <a href="#names">Chromosome names</a>
@@ -291,25 +292,46 @@ def help_html(static_prefix: str, prefix: str) -> str:
              type from a gene annotation, or the regions of a BED track), scaled from start to end, with 1 to 10 kb either
              side, or lined up on their starts or ends. Up to four feature types, each its own panel. With
              <b>Heatmap</b>, every feature is a row too, sorted by signal or grouped into clusters, so you see whether a
-             change touches every gene a little or some genes a lot. Limit it to a list of genes with <b>Only these</b>.</p>
+             change touches every gene a little or some genes a lot. Limit it to a list of genes with <b>Only these</b>.
+             It can also line features up on their middle, or peaks on their summit; clusters come with their gene lists.
+             <a href="#read-profile">Reading it</a></p>
         </div>
         <div class="help-card">
           <h3>Difference between two tracks</h3>
           <p>A new coverage track of track A against track B: A minus B, log2(A / B), A / B, or their mean, in steps of
              50 bp to 1 kb. It is kept for your lab like an upload, shown at once, and can be drawn in Circos plots
-             and profiles like any track. For a ratio, the pseudocount is added to both so that zero does not divide.</p>
+             and profiles like any track. For a ratio, the pseudocount is added to both so that zero does not divide.
+             <a href="#read-compare">Reading it</a></p>
         </div>
         <div class="help-card">
           <h3>Replicate check</h3>
           <p>The chosen tracks compared along the whole genome in bins (5 to 100 kb): a heatmap of their correlations
              (Pearson, or Spearman on ranks), clustered, with the values written in, and a principal component plot.
-             Replicates should sit together and mutants apart; one that does not is worth a look before trusting it.</p>
+             Replicates should sit together and mutants apart; one that does not is worth a look before trusting it.
+             <a href="#read-correlation">Reading it</a></p>
         </div>
         <div class="help-card">
           <h3>Signal per feature</h3>
           <p>The mean of each coverage track over every feature of one type, as a table (CSV) with each feature's name
              and position: one row per gene, say. With two tracks, their difference too, and the fifty features that differ
-             most are shown straight away.</p>
+             most are shown straight away. <a href="#read-genes">Reading it</a></p>
+        </div>
+        <div class="help-card">
+          <h3>Fingerprint</h3>
+          <p>A quality check: whether each coverage track's signal is gathered in places (enrichment) or spread over the
+             genome (background). Run a ChIP beside its input. <a href="#read-fingerprint">Reading it</a></p>
+        </div>
+        <div class="help-card">
+          <h3>Methylation against expression</h3>
+          <p>Each gene's methylation level against its expression from an RNA-seq track, with genes grouped by
+             expression: box plots, every gene as a point, a table of every gene, and a profile of each group.
+             <a href="#read-methexpr">Reading it</a></p>
+        </div>
+        <div class="help-card">
+          <h3>Methylation and expression per gene, across samples</h3>
+          <p>Several samples, each a methylation track paired with the RNA-seq track of the same material. Every gene's
+             correlation between its methylation and expression across them, ranked, with p- and q-values.
+             <a href="#read-genecorr">Reading it</a></p>
         </div>
         <div class="help-card">
           <h3>Tracks over the selection</h3>
@@ -321,12 +343,177 @@ def help_html(static_prefix: str, prefix: str) -> str:
              other, drawn both ways round, so blocks that kept their order show as diagonals.</p>
         </div>
       </div>
-      <p>The first four run on the server and can take a while: seconds for a replicate check, a few minutes for a
+      <p>All but the bar chart and the dot plot run on the server and can take a while: seconds for a replicate check, a few minutes for a
          profile of every gene with several tracks. The panel says how long it has been working and whether it is waiting
          for another job; you can close it and keep browsing, and up to three can wait at once. Results are kept for seven
          days. Only tracks you may see can be used. They are drawn with
          <a href="https://deeptools.readthedocs.io" target="_blank" rel="noopener">deepTools</a>; cite it if a figure goes
          into a paper (see About).</p>
+    </section>
+
+    <section id="reading">
+      <h2>Reading the analyses</h2>
+      <p>What each analysis tells you, when to reach for it, how to read what it draws, and what can mislead. None of
+         them is a statistical test: they show what the tracks say, so that you know where to look and what to test.</p>
+
+      <section id="read-profile">
+      <h3>Profile around features, and heatmap</h3>
+      <p><b>What it tells you.</b> Where along a kind of feature the signal sits on average (before the start, at the
+         start, along the body, at the end), and how that differs between tracks or between feature types. The heatmap
+         tells you whether that average is shared by all features or made by some of them.</p>
+      <p><b>When to use it.</b> To compare a mutant with the wild type over genes or transposons; to see whether a mark
+         sits at promoters or along gene bodies; to check that a ChIP shows the shape it should.
+         <b>The whole feature, scaled</b> suits marks that cover the body (gene-body methylation, H3K36me3).
+         <b>Its start</b>, <b>its end</b>, <b>its middle</b> or <b>its summit</b> line every feature up on one point, in
+         real base pairs: the transcription start for promoter methylation or H3K4me3, a peak's summit (from a narrowPeak
+         file) for signal around binding sites.</p>
+      <p><b>How to read it.</b> Along the bottom: the stretch before, the feature, the stretch after. When scaled,
+         every feature is stretched or squeezed to the same length, so a position inside it is a share of the way along,
+         not a distance. Up the side: the mean signal (or for a methylation track, the level, 0 to 1). In the heatmap,
+         each row is one feature, in the same order in every column, so you can follow one gene across tracks; the rows
+         are sorted by mean signal, highest at the top, and the colour bar gives the scale. With <b>Group the rows</b>,
+         k-means puts features whose rows look alike together; the profile above the heatmap then has a line for each
+         cluster, and the caption gives their sizes. Each cluster's names can be downloaded (one to a line, for a
+         GO-enrichment tool such as PANTHER or agriGO), or kept as a track to view, or to draw a profile or table of.</p>
+      <p><b>Watch out for.</b> A mean can be made by a few features with a lot of signal: look at the heatmap before
+         saying "all genes". The two choices under the profile (leave out features with no signal; count stretches
+         without data as zero) change the mean, so say which you used; the label gives how many features were drawn.
+         Tracks compared on one axis need the same normalisation (CPM, RPKM). Clusters are as many as you ask for, not
+         as many as there are: try two or three numbers, and trust a cluster that keeps turning up. A methylation
+         heatmap fills steps without a cytosine from those beside them, for the picture only.</p>
+
+      </section>
+      <section id="read-compare">
+      <h3>Difference between two tracks</h3>
+      <p><b>What it tells you.</b> Where along the genome one track is higher or lower than another, as a new track.</p>
+      <p><b>When to use it.</b> To see a mutant's gains and losses against the wild type in the browser, next to the
+         genes; then to draw a profile or a Circos plot of the difference itself.</p>
+      <p><b>How to read it.</b> <i>A minus B</i>: above zero, more in A. <i>log2(A / B)</i>: 0 the same, 1 twice as
+         much in A, &minus;1 half as much. <i>A / B</i>: 1 the same.</p>
+      <p><b>Watch out for.</b> Both tracks must be normalised the same way. Where both are low, ratios swing wildly:
+         the pseudocount (added to both) calms that; raise it for sparse tracks. One track against one track has no
+         replicates: it shows where to look, not what is significant (for that, DESeq2 for expression, or a DMR caller
+         for methylation).</p>
+
+      </section>
+      <section id="read-correlation">
+      <h3>Replicate check: correlation and PCA</h3>
+      <p><b>What it tells you.</b> How alike the tracks are along the whole genome, and what the main differences
+         between them are.</p>
+      <p><b>When to use it.</b> Before trusting any other figure: replicates should look like each other more than
+         like anything else. It finds a swapped label, a failed library or a batch effect.</p>
+      <p><b>How to read it.</b> The heatmap gives each pair's correlation over the bins (1: they rise and fall
+         together), and its tree puts the most alike side by side. Pearson is swayed by a few bins with very high signal;
+         Spearman works on ranks and is not. In the PCA, each dot is a track and the closer two dots, the more alike;
+         the first component (PC1) is the largest difference among the tracks, and the share of variance it explains is
+         on its axis. Replicates should sit together, and conditions apart, ideally along PC1. The bar chart beside it
+         (scree plot) shows how much each component explains.</p>
+      <p><b>Watch out for.</b> Tracks of one kind correlate highly anyway (genes and transposons differ everywhere), so
+         compare the numbers with each other rather than with 1. Tracks of different kinds (RNA-seq against methylation)
+         are not replicates of anything. With two or three tracks a PCA says little. Bigger bins smooth more.</p>
+
+      </section>
+      <section id="read-genes">
+      <h3>Signal per feature (table)</h3>
+      <p><b>What it tells you.</b> One number per feature per track: each gene's mean coverage, or methylation
+         level.</p>
+      <p><b>When to use it.</b> To rank genes, find the most changed, or take the numbers into Excel or R and join them
+         with your own lists.</p>
+      <p><b>How to read it.</b> A row per feature, with its name and position; a column per track, and with two tracks
+         their difference. The fifty that differ most are shown at once.</p>
+      <p><b>Watch out for.</b> A mean over a feature is not TPM or a count: compare genes by rank, and tracks only when
+         normalised alike. There are no p-values.</p>
+
+      </section>
+      <section id="read-bars">
+      <h3>Tracks over the selection (bar chart)</h3>
+      <p><b>What it tells you.</b> Each track's mean over the one region you selected. <b>When to use it.</b> To put a
+         number on what you see at a locus, for a slide. <b>Watch out for.</b> It is one region, with no error bars, and
+         the mean moves with where you put the ends of the selection.</p>
+
+      </section>
+      <section id="read-dotplot">
+      <h3>Synteny dot plot</h3>
+      <p><b>What it tells you.</b> Which parts of one genome match which parts of another (or of itself). <b>How to
+         read it.</b> A diagonal line is a block whose order was kept; one running the other way is an inversion; a
+         block away from the diagonal is a translocation or a duplication.</p>
+
+      </section>
+      <section id="read-fingerprint">
+      <h3>Fingerprint (quality check)</h3>
+      <p><b>What it tells you.</b> Whether a track's signal is gathered in some places (enrichment) or spread over the
+         genome (background).</p>
+      <p><b>When to use it.</b> To check a ChIP-seq, CUT&amp;RUN or ATAC-seq library before you analyse it, ideally next
+         to its input: a ChIP that failed looks like its input.</p>
+      <p><b>How to read it.</b> The genome is cut into bins and the bins sorted by their signal, lowest on the left. The
+         line climbs by each bin's share of the signal. Signal spread evenly follows the dashed diagonal. The more the
+         line hugs the bottom and shoots up at the right, the more of the signal sits in a few bins. The numbers in the
+         caption (and the table): the share of bins with no signal; the share of all signal in the top 1% of bins; the
+         elbow, where the line is furthest below the diagonal (further right, more enriched); and the area under the
+         line (0.5 even, lower more gathered). A good ChIP lies well below its input; an input lies near the diagonal;
+         a sharp factor bends harder than a broad mark such as H3K27me3.</p>
+      <p><b>Watch out for.</b> It is drawn from coverage, not reads, so duplicates and mapping quality are not judged
+         (deepTools' plotFingerprint, which reads BAM files, does). A shallow library has many empty bins and looks
+         enriched: compare tracks of a similar depth. RNA-seq always looks enriched, as its reads are on genes.
+         Methylation tracks are left out.</p>
+
+      </section>
+      <section id="read-methexpr">
+      <h3>Methylation against expression</h3>
+      <p><b>What it tells you.</b> How a gene's methylation goes with its expression, over all genes at once.</p>
+      <p><b>When to use it.</b> To see the known patterns in your own data, and whether a mutant or tissue changes
+         them. In plants, CG methylation along gene bodies is highest in moderately expressed genes and low in the least
+         and most expressed; methylation before a gene (its promoter), and CHG and CHH methylation, go with silencing.
+         Tick one methylation track per context (CG, CHG, CHH): each gets its own row of plots.</p>
+      <p><b>How to read it.</b> Genes are put into groups by expression: <i>no reads</i> (grey: no RNA-seq reads at all,
+         often transposon genes and pseudogenes, and often heavily methylated), then equal groups from the lowest to the
+         highest expressed. <i>Boxes</i>: one per group; the line is the median, the box the middle half of the genes,
+         the whiskers the range without outliers, the red dot the mean, and n the genes with a value. <i>The points</i>:
+         each hexagon counts the genes that fall there (colour on a log scale); across, expression as log2(mean coverage
+         + 1); up, the methylation level. Spearman's ρ above it says how far methylation rises (above 0) or falls
+         (below 0) with expression, over all genes, and over expressed genes only. <i>Profile of each group</i>: the level
+         along the genes of each group, a line each, so you see where the groups part (the dip at the start, the
+         body). <i>The table</i>: every gene with its expression, level and group. <i>Genes ranked</i> (a file per
+         methylation track): every gene's expression and methylation as percentile ranks among the genes (0 the lowest,
+         100 the highest), and <i>methylated minus expressed</i>, the one less the other. Sorted by it: at the top,
+         genes much more methylated than expressed (methylated and silent: transposon genes, silenced genes); at the foot,
+         genes much more expressed than methylated (unmethylated and active); in the middle, genes as methylated as they
+         are expressed, high in both (gene-body methylated) or low in both.</p>
+      <p><b>Watch out for.</b> A curve that rises and falls (as gene-body methylation does) gives a ρ near 0 even when
+         the pattern is strong: read the boxes, not ρ alone. Expression here is the RNA-seq track's mean coverage over
+         each gene, not TPM: fine for ranking genes, not for comparing amounts. Use RNA-seq and methylation of the same
+         genotype and tissue. With one sample of each there is a value per gene, not a correlation per gene; the ranked
+         file says where a gene stands, not that it changes. Which genes change together needs several matched samples:
+         <a href="#read-genecorr">per gene, across samples</a>. A gene with no cytosines measured has no level and is left out of
+         that track's plots. A short feature (a miRNA, a small gene) with only one or two cytosines measured reads
+         0 or 1 easily, so such features crowd the ends of the ranked file: check their length before believing them.
+         It shows association, not cause.</p>
+
+      </section>
+      <section id="read-genecorr">
+      <h3>Methylation and expression per gene, across samples</h3>
+      <p><b>What it tells you.</b> For each gene, whether its methylation and its expression go up and down together
+         across your samples: which genes are expressed less where they are more methylated (or more), and how
+         consistently.</p>
+      <p><b>When to use it.</b> When you have matched samples, each with methylation and RNA-seq of the same material:
+         a wild type and methylation mutants (<i>met1</i>, <i>cmt3</i>, <i>ddm1</i>, <i>drm1 drm2</i>), tissues, time
+         points or treatments. Genes with a strong negative correlation are candidates for being silenced by methylation,
+         to follow up.</p>
+      <p><b>How to read it.</b> Pair each sample's methylation track with its RNA-seq track, and name it. For each gene,
+         Spearman's ρ is worked out over the samples where it has both values: &minus;1, the more methylated the less
+         expressed, in perfect order; +1 the other way; 0 no order. The table ranks every gene from the most negative ρ
+         to the most positive, with the samples used, the p-value and the q-value, and the gene's methylation and
+         expression in each sample, so you can see what drives it. A gene that does not vary in methylation or in
+         expression across the samples has no ρ and goes to the foot of the table. The histogram shows ρ over all genes
+         tested; the small plots show the two most negative and two most positive genes, one point a sample.</p>
+      <p><b>Watch out for.</b> Few samples give little power: with n samples, ρ can take only a few values, and the
+         smallest p-value possible is 2 / n! (0.083 with 4 samples, 0.017 with 5, 0.003 with 6); the caption says it.
+         p-values are exact (every ordering of the samples) up to nine samples. q-values correct for testing thousands of
+         genes at once (Benjamini-Hochberg): trust q, not p. Replicates of the same condition count as separate samples
+         here and can make a correlation look stronger than the biology; pairing conditions (means of replicates) is
+         the cautious choice. RNA-seq tracks must be normalised alike (CPM, RPKM) for expression to compare across
+         samples. A correlation is not a cause: a mutant changes many things at once.</p>
+      </section>
     </section>
 
     <section id="methylation">

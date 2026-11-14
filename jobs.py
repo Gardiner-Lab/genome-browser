@@ -30,6 +30,7 @@ KINDS = {
     'genes': 'Signal per feature (table)',
     'fingerprint': 'Fingerprint (quality check)',
     'methexpr': 'Methylation against expression',
+    'genecorr': 'Methylation and expression per gene, across samples',
     'compare': 'Comparing two tracks',
     'motif': 'Marking sequences on the genome',
     'bam': 'Preparing an upload (BAM to coverage)',
@@ -160,6 +161,7 @@ def _track_names(conn, rows) -> Dict[str, str]:
         p = _json(r['params'])
         ids.update(str(i) for i in (p.get('tracks') or []))
         ids.update(str(p[k]) for k in ('a', 'b', 'expression') if p.get(k))
+        ids.update(str(x[k]) for x in (p.get('pairs') or []) for k in ('methylation', 'expression') if x.get(k))
     if not ids:
         return {}
     marks = ','.join('?' * len(ids))
@@ -176,6 +178,9 @@ def _about(kind: str, params: dict, result: dict, names: Dict[str, str]) -> str:
         return f"{names.get(str(params.get('a')), 'A')} against {names.get(str(params.get('b')), 'B')}"
     if kind == 'motif':
         return str(params.get('name') or 'sequence')
+    if kind == 'genecorr':
+        return f"{len(params.get('pairs') or [])} samples: " + ', '.join(
+            x.get('label') or names.get(str(x.get('methylation')), 'a sample') for x in (params.get('pairs') or [])[:4])
     if kind == 'methexpr':
         expression = names.get(str(params.get('expression')), 'an expression track')
         return f'{listed} against {expression}'

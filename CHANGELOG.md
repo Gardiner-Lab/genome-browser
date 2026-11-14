@@ -25,6 +25,15 @@ and the project uses [semantic versioning](https://semver.org/).
   GO-enrichment tool), and *Keep cluster N as a track*, a BED track of the lab to view or analyse again.
   Up to 6 clusters.
 
+- **Methylation and expression per gene, across samples** (Analyse): pair each sample's methylation track with
+  its RNA-seq track; each gene's Spearman correlation across the samples, with an exact p-value (every ordering
+  of the samples, up to nine) and Benjamini-Hochberg q-values, every gene ranked from the most negative to the
+  most positive (`plots.py genecorr`). The caption gives the smallest p-value the number of samples allows.
+- **Methylation against expression ranks the genes:** a file per methylation track, each gene's expression and
+  methylation as percentile ranks and their difference, methylated and silent genes first.
+- **Reading the analyses**, in Help: for each analysis what it tells you, when to use it, how to read it and
+  what can mislead; linked from the Analyse panel and from each result.
+
 ### Fixed
 - **Grouping a heatmap's rows into clusters failed** ("length new labels != length original labels"):
   plotHeatmap was given the feature sets' names, which no longer apply once the rows are regrouped.

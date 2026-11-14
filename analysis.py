@@ -41,7 +41,8 @@ import feature_index
 import regions
 import signal_kind
 
-KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif', 'fingerprint', 'methexpr')
+KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif', 'fingerprint', 'methexpr', 'genecorr')
+MAX_PAIRS = 12
 PROFILE_MODES = ('scale', 'start', 'end', 'center', 'summit')
 # Where a methylation-against-expression plot measures methylation: the gene, or the stretch before it.
 METHEXPR_REGIONS = {'body': 'over each gene', 'up1000': 'over the 1 kb before each gene',
@@ -629,10 +630,11 @@ def run_methexpr(params: dict, expression: dict, tracks: List[dict], region_trac
     title = (params.get('title') or '').strip()[:100]
     _plot(['methexpr', '--genes', 'regions.bed', '--expression', 'expression.tab', '--methylation', 'methylation.tab',
            '-o', 'methexpr.svg', '--table', 'methylation-vs-expression.csv', '--groups', str(groups),
-           '--group-beds', 'group', '--where', METHEXPR_REGIONS[where], '--summary', 'methexpr.json',
+           '--group-beds', 'group', '--ranked', 'ranked', '--where', METHEXPR_REGIONS[where],
+           '--summary', 'methexpr.json',
            *(['--title', title] if title else [])], work, 'Drawing methylation against expression', at=0.55)
     found = json.loads((work / 'methexpr.json').read_text())
-    files = ['methexpr.svg', 'methylation-vs-expression.csv']
+    files = ['methexpr.svg', 'methylation-vs-expression.csv'] + [r['file'] for r in found['ranked']]
     if params.get('group_profile') is not False and found['beds']:
         # The classic figure: the level along the genes of each expression group, one line a group.
         _run(['computeMatrix', 'scale-regions', '-S', *levels, '-R', *[b['file'] for b in found['beds']],
@@ -647,7 +649,78 @@ def run_methexpr(params: dict, expression: dict, tracks: List[dict], region_trac
         files.append('groups-matrix.gz')
     return _measured_as(tracks, {'files': files, 'count': n, 'region': where, 'where': METHEXPR_REGIONS[where],
                                  'expression': expression['name'], 'groups': found['groups'],
-                                 'no_expression_value': found['no_expression_value'], 'tracks': found['tracks']})
+                                 'no_expression_value': found['no_expression_value'], 'tracks': found['tracks'],
+                                 'ranked': found['ranked']})
+
+
+def _region_beds(params: dict, region_tracks: Dict[str, dict], work: Path, sizes_from: str) -> Tuple[Path, Path, int, str]:
+    """The genes chosen as regions.bed, and the stretch methylation is measured over (the genes, or the
+    stretch before each); how many genes; and which stretch."""
+    rs = (params.get('regions') or [{}])[0]
+    rt = region_tracks.get(rs.get('track'))
+    if rt is None:
+        raise AnalysisError('Choose the features: the genes.')
+    bed = work / 'regions.bed'
+    n = region_bed(rt['file_path'], rt['type'], rs.get('type') or None, rs.get('names'), bed)
+    if n < 10:
+        raise AnalysisError('Fewer than ten of the chosen features were found: choose the genes.')
+    where = params.get('region') if params.get('region') in METHEXPR_REGIONS else 'body'
+    if where == 'body':
+        return bed, bed, n, where
+    import pyBigWig
+    bw = pyBigWig.open(sizes_from)
+    try:
+        sizes = dict(bw.chroms() or {})
+    finally:
+        bw.close()
+    up = work / 'regions-upstream.bed'
+    upstream_bed(bed, up, int(where[2:]), sizes)
+    return bed, up, n, where
+
+
+def run_genecorr(params: dict, pairs: List[Tuple[dict, dict, str]], region_tracks: Dict[str, dict], work: Path) -> dict:
+    """
+    Per gene, across samples: each sample a methylation track and an RNA-seq track of the same material.
+    Each gene's Spearman correlation between methylation and expression over the samples (plots.py genecorr).
+    """
+    if len(pairs) < 3:
+        raise AnalysisError('Pair at least three samples (a methylation and an RNA-seq track each); five or more '
+                            'for a p-value that can mean anything.')
+    for meth, expr, label in pairs:
+        if not _is_level(meth):
+            raise AnalysisError(f'“{meth["name"]}” (sample {label}) is not a methylation track: its Details say which it is.')
+        if _is_level(expr):
+            raise AnalysisError(f'“{expr["name"]}” (sample {label}) is a methylation track: choose an RNA-seq track.')
+    bed, meth_bed, n, where = _region_beds(params, region_tracks, work, pairs[0][1]['file_path'])
+    labels = [label for _, _, label in pairs]
+    _measure(['features', str(bed), *[e['file_path'] for _, e, _ in pairs], '--labels', *labels,
+              '-o', str(work / 'expression.tab')], 'Measuring expression', span=(0.0, 0.45))
+    _measure(['features', str(meth_bed), *[_source(m) for m, _, _ in pairs], '--labels', *labels,
+              '--as', *['level'] * len(pairs), '-o', str(work / 'methylation.tab')],
+             'Measuring methylation', span=(0.45, 0.85))
+    title = (params.get('title') or '').strip()[:100]
+    _plot(['genecorr', '--genes', 'regions.bed', '--expression', 'expression.tab', '--methylation', 'methylation.tab',
+           '-o', 'genecorr.svg', '--table', 'per-gene-correlation.csv', '--where', METHEXPR_REGIONS[where],
+           '--summary', 'genecorr.json', *(['--title', title] if title else [])],
+          work, 'Correlating each gene', at=0.85)
+    found = json.loads((work / 'genecorr.json').read_text())
+    return _measured_as([m for m, _, _ in pairs], {
+        'files': ['genecorr.svg', 'per-gene-correlation.csv'], 'count': n, 'region': where,
+        'where': METHEXPR_REGIONS[where], 'samples': labels, 'tested': found['tested'],
+        'significant': found['significant'], 'smallest_p_possible': found['smallest_p_possible'],
+        'most_negative': found['most_negative'], 'most_positive': found['most_positive']})
+
+
+def sample_labels(pairs: List[dict], rows: Dict[str, dict]) -> List[str]:
+    """Each sample's name: as given, else its methylation track's; made distinct."""
+    out: List[str] = []
+    for i, p in enumerate(pairs):
+        base = _label(str(p.get('label') or '').strip() or rows.get(p['methylation'], {}).get('name') or f'sample {i + 1}')[:40]
+        name, k = base, 2
+        while name in out:
+            name, k = f'{base} ({k})', k + 1
+        out.append(name)
+    return out
 
 
 def _group_colours(beds: List[dict]) -> List[str]:
@@ -800,6 +873,7 @@ def run_job(conn, data_root: Path, job) -> None:
     try:
         ids = list(params.get('tracks') or []) + [r.get('track') for r in params.get('regions') or []]
         ids = [i for i in ids + [params.get('a'), params.get('b'), params.get('expression')] if i]
+        ids += [p[k] for p in params.get('pairs') or [] for k in ('methylation', 'expression') if p.get(k)]
         rows = {}
         if ids:
             rows = {r['id']: dict(r) for r in conn.execute(
@@ -835,6 +909,14 @@ def run_job(conn, data_root: Path, job) -> None:
             if not coverage:
                 raise AnalysisError('Tick at least one methylation track.')
             result = run_methexpr(params, expression, coverage, region_tracks, work)
+        elif kind == 'genecorr':
+            pairs = params.get('pairs') or []
+            ready = [p for p in pairs if all(rows.get(p.get(k)) and rows[p[k]]['type'] == 'bigwig'
+                                             and rows[p[k]]['track_status'] == 'ready' for k in ('methylation', 'expression'))]
+            if len(ready) < len(pairs):
+                raise AnalysisError('A track of the samples is gone, or not ready.')
+            result = run_genecorr(params, [(rows[p['methylation']], rows[p['expression']], label)
+                                           for p, label in zip(pairs, sample_labels(pairs, rows))], region_tracks, work)
         elif kind == 'motif':
             # Marking a sequence on a big genome: too slow to hold a request open, so it waits here
             # with the rest. It makes its own BED track (tracks.py), as 'compare' makes a BigWig one.
@@ -1053,8 +1135,13 @@ def register_analysis(app) -> None:
                                   'names': [str(n)[:80] for n in (r.get('names') or [])][:5000]} for r in sets]
             params['a'], params['b'] = str(body.get('a') or ''), str(body.get('b') or '')
             params['expression'] = str(body.get('expression') or '') if kind == 'methexpr' else ''
+            params['pairs'] = [{'methylation': str(p.get('methylation') or ''), 'expression': str(p.get('expression') or ''),
+                                'label': str(p.get('label') or '').strip()[:40]}
+                               for p in (body.get('pairs') or []) if isinstance(p, dict)][:MAX_PAIRS] \
+                if kind == 'genecorr' else []
+            paired = [p[k] for p in params['pairs'] for k in ('methylation', 'expression')]
             ids = tracks + [r['track'] for r in params['regions']] + \
-                [x for x in (params['a'], params['b'], params['expression']) if x]
+                [x for x in (params['a'], params['b'], params['expression']) if x] + [x for x in paired if x]
             try:
                 rows = _viewable(conn, member, genome_id, ids)
             except AnalysisError as exc:
@@ -1066,6 +1153,11 @@ def register_analysis(app) -> None:
                 owner_lab = labs_reader.current_lab(member)
                 if not owner_lab:
                     return jsonify({'error': 'You must belong to a lab to keep a new track.'}), 400
+            elif kind == 'genecorr':
+                if len(params['pairs']) < 3 or not all(paired):
+                    return jsonify({'error': 'Pair at least three samples: a methylation and an RNA-seq track each.'}), 400
+                if any(rows[x]['type'] != 'bigwig' for x in paired):
+                    return jsonify({'error': 'Only coverage (BigWig) tracks can be measured.'}), 400
             elif not tracks:
                 return jsonify({'error': 'Choose at least one coverage track.'}), 400
             if any(rows[t]['type'] != 'bigwig' for t in tracks):
@@ -1075,7 +1167,7 @@ def register_analysis(app) -> None:
                     return jsonify({'error': 'Choose the expression track: an RNA-seq coverage track.'}), 400
                 if params['expression'] in tracks:
                     return jsonify({'error': 'The expression track is ticked as a methylation track too.'}), 400
-            if kind in ('profile', 'genes', 'methexpr') and not params['regions']:
+            if kind in ('profile', 'genes', 'methexpr', 'genecorr') and not params['regions']:
                 return jsonify({'error': 'Choose the features: a gene annotation or BED track, and a type.'}), 400
             busy = conn.execute("SELECT count(*) FROM analysis_jobs WHERE member = ? AND state IN ('queued', 'running')",
                                 (member,)).fetchone()[0] if conn.execute(

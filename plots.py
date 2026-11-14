@@ -6,7 +6,9 @@ deepTools):
 
     python3 plots.py fingerprint summary.npz -o fingerprint.svg --metrics fingerprint-metrics.tab
     python3 plots.py methexpr --genes regions.bed --expression expression.tab --methylation methylation.tab \\
-        -o methexpr.svg --table methylation-vs-expression.csv --groups 5 --group-beds group
+        -o methexpr.svg --table methylation-vs-expression.csv --groups 5 --group-beds group --ranked ranked
+    python3 plots.py genecorr --genes regions.bed --expression expression.tab --methylation methylation.tab \\
+        -o genecorr.svg --table per-gene-correlation.csv
 
 ``fingerprint``: deepTools' plotFingerprint reads BAM files only. This draws the same curve from the
 bins ``bigwig_means.py bins`` makes of each track: the bins sorted by their signal, lowest first, and
@@ -19,7 +21,14 @@ each methylation track's level over it (or over the stretch before it), from two
 those with no reads, then the rest in equal-sized groups by expression. For each methylation track it
 draws the level per group (boxes), and the level against expression (each feature a point, with
 Spearman's rank correlation). It writes the table, and each group as a BED file, for a profile of
-each group (computeMatrix).
+each group (computeMatrix). With ``--ranked``, a file per methylation track ranks the genes by how
+much more methylated than expressed they are (percentile ranks): methylated, silent genes first.
+
+``genecorr``: several samples, each a methylation track and an RNA-seq track of the same material
+(WT and mutants, tissues, time points), in the same order in both tables. For each gene, Spearman's
+correlation between its methylation level and its expression across the samples, with an exact
+p-value (all orderings of the samples, up to nine) and Benjamini-Hochberg q-values; the genes ranked
+from the most negative to the most positive.
 """
 import argparse
 import csv
@@ -156,8 +165,45 @@ def _spearman(x, y):
     return None if rho != rho else float(rho)
 
 
+def percentiles(values: List[Optional[float]]) -> List[Optional[float]]:
+    """Each value's rank among those given (ties share the mean rank), from 0 (lowest) to 100 (highest)."""
+    from scipy.stats import rankdata
+    have = [i for i, v in enumerate(values) if v is not None]
+    out: List[Optional[float]] = [None] * len(values)
+    if not have:
+        return out
+    ranks = rankdata([values[i] for i in have])
+    span = max(1, len(have) - 1)
+    for i, r in zip(have, ranks):
+        out[i] = (r - 1) / span * 100
+    return out
+
+
+def write_ranked(path: str, bed, expr, level, group, names) -> int:
+    """
+    The genes of one methylation track, ranked by how much more methylated than expressed they are:
+    its methylation's percentile among the genes minus its expression's. At the top, methylated genes
+    with little or no expression; at the foot, unmethylated genes that are highly expressed; genes as
+    methylated as they are expressed (either both high or both low) in the middle.
+    """
+    e_pct, m_pct = percentiles(expr), percentiles(level)
+    rows = [(m - e, i) for i, (e, m) in enumerate(zip(e_pct, m_pct)) if e is not None and m is not None]
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    with open(path, 'w', newline='', encoding='utf-8') as fh:
+        w = csv.writer(fh)
+        w.writerow(['rank', 'name', 'chrom', 'start', 'end', 'strand', 'expression', 'expression_percentile',
+                    'methylation', 'methylation_percentile', 'methylated_minus_expressed', 'expression_group'])
+        for rank, (score, i) in enumerate(rows, 1):
+            f = bed[i]
+            w.writerow([rank, f[3], f[0], int(f[1]) + 1, f[2], f[5] if len(f) > 5 else '.', f'{expr[i]:.6g}',
+                        f'{e_pct[i]:.1f}', f'{level[i]:.6g}', f'{m_pct[i]:.1f}', f'{score:.1f}',
+                        '' if group[i] is None else names[group[i]]])
+    return len(rows)
+
+
 def methexpr(genes: str, expression: str, methylation: str, out: str, table: str, groups: int = 5,
-             group_beds: Optional[str] = None, title: str = '', where: str = 'over each gene') -> dict:
+             group_beds: Optional[str] = None, title: str = '', where: str = 'over each gene',
+             ranked: Optional[str] = None) -> dict:
     import numpy as np
     plt = _plt()
     _, expr_rows = _table(expression)
@@ -186,6 +232,13 @@ def methexpr(genes: str, expression: str, methylation: str, out: str, table: str
             with open(path, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.writelines('\t'.join(f) + '\n' for f, g in zip(bed, group) if g == k)
             beds.append({'file': path, 'label': f'{names[k]} ({counts[k]:,})', 'count': counts[k]})
+
+    ranked_files = []
+    if ranked:
+        for t, label in enumerate(meth_labels):
+            path = f'{ranked}-{t + 1}.csv'
+            n = write_ranked(path, bed, expr, [r[t] for r in meth_rows], group, names)
+            ranked_files.append({'track': label, 'file': path, 'genes': n})
 
     tracks = []
     fig, axes = plt.subplots(len(meth_labels), 2, figsize=(11, 3.9 * len(meth_labels)), squeeze=False,
@@ -232,7 +285,147 @@ def methexpr(genes: str, expression: str, methylation: str, out: str, table: str
     plt.close(fig)
     return {'groups': [{'label': names[k], 'count': counts[k]} for k in range(groups + 1)],
             'no_expression_value': sum(1 for g in group if g is None),
-            'tracks': tracks, 'beds': beds}
+            'tracks': tracks, 'beds': beds, 'ranked': ranked_files}
+
+
+# --- per gene, across samples ---------------------------------------------------------------------
+
+_NULL: dict = {}
+
+
+def _null_rho(n: int):
+    """Spearman's rho of every ordering of n samples against 1..n, without ties: its exact null."""
+    import itertools
+    import numpy as np
+    if n not in _NULL:
+        perms = np.array(list(itertools.permutations(range(n))), dtype=np.int16)
+        d = perms - np.arange(n)
+        _NULL[n] = np.sort(np.abs(1 - 6 * (d * d).sum(axis=1) / (n * (n * n - 1))))
+    return _NULL[n]
+
+
+def gene_correlation(meth: List[Optional[float]], expr: List[Optional[float]]):
+    """
+    One gene's Spearman correlation across the samples where it has both values: (rho, p, n). p is
+    two-sided: exact over every ordering of the samples for up to nine, else from scipy's t
+    approximation. None for rho where either value does not vary (it cannot rise or fall together).
+    """
+    import numpy as np
+    from scipy.stats import spearmanr
+    pairs = [(m, e) for m, e in zip(meth, expr) if m is not None and e is not None]
+    n = len(pairs)
+    if n < 3:
+        return None, None, n
+    m = [p[0] for p in pairs]
+    e = [p[1] for p in pairs]
+    if len(set(m)) < 2 or len(set(e)) < 2:
+        return None, None, n
+    res = spearmanr(m, e)
+    rho = float(res.correlation)
+    if rho != rho:
+        return None, None, n
+    if n <= 9:
+        null = _null_rho(n)
+        # Ties make rho take values between the null's; a hair of slack keeps equal ones equal.
+        p = float((len(null) - np.searchsorted(null, abs(rho) - 1e-9)) / len(null))
+    else:
+        p = float(res.pvalue)
+    return rho, p, n
+
+
+def bh(pvalues: List[Optional[float]]) -> List[Optional[float]]:
+    """Benjamini-Hochberg q-values over the p-values given (None left out)."""
+    have = sorted((p, i) for i, p in enumerate(pvalues) if p is not None)
+    q: List[Optional[float]] = [None] * len(pvalues)
+    m, running = len(have), 1.0
+    for k in range(m - 1, -1, -1):
+        p, i = have[k]
+        running = min(running, p * m / (k + 1))
+        q[i] = running
+    return q
+
+
+def genecorr(genes: str, expression: str, methylation: str, out: str, table: str, title: str = '',
+             where: str = 'over each gene') -> dict:
+    import math
+    import numpy as np
+    plt = _plt()
+    labels, expr_rows = _table(expression)
+    meth_labels, meth_rows = _table(methylation)
+    bed = [line.rstrip('\n').split('\t') for line in open(genes, encoding='utf-8') if line.strip()]
+    if not (len(bed) == len(expr_rows) == len(meth_rows)):
+        raise SystemExit('The tables do not have a row for each feature of the BED file.')
+    if len(labels) != len(meth_labels):
+        raise SystemExit('Give as many expression tracks as methylation tracks, sample by sample.')
+    samples = meth_labels
+    found = [gene_correlation(m, e) for m, e in zip(meth_rows, expr_rows)]
+    q = bh([p for _, p, _ in found])
+    order = sorted(range(len(bed)), key=lambda i: (found[i][0] is None, found[i][0] if found[i][0] is not None else 0,
+                                                  found[i][1] if found[i][1] is not None else 1))
+    with open(table, 'w', newline='', encoding='utf-8') as fh:
+        w = csv.writer(fh)
+        w.writerow(['rank', 'name', 'chrom', 'start', 'end', 'strand', 'samples', 'spearman_rho', 'p', 'q']
+                   + [f'methylation {s}' for s in samples] + [f'expression {s}' for s in samples])
+        for rank, i in enumerate(order, 1):
+            f, (rho, p, n) = bed[i], found[i]
+            w.writerow([rank if rho is not None else '', f[3], f[0], int(f[1]) + 1, f[2], f[5] if len(f) > 5 else '.', n,
+                        '' if rho is None else f'{rho:.4f}', '' if p is None else f'{p:.4g}',
+                        '' if q[i] is None else f'{q[i]:.4g}']
+                       + ['' if v is None else f'{v:.6g}' for v in meth_rows[i]]
+                       + ['' if v is None else f'{v:.6g}' for v in expr_rows[i]])
+
+    rhos = np.array([r for r, _, _ in found if r is not None])
+    tested = len(rhos)
+    best_p = min((p for _, p, _ in found if p is not None), default=None)
+    negative = [i for i in order if found[i][0] is not None and found[i][0] < 0][:3]
+    positive = [i for i in reversed(order) if found[i][0] is not None and found[i][0] > 0][:3]
+    shown = negative[:2] + positive[:2]          # four small plots: the two most negative, the two most positive
+    fig = plt.figure(figsize=(12, 7.5))
+    grid = fig.add_gridspec(2, 4)
+    ax = fig.add_subplot(grid[:, 0:2] if not shown else grid[0, 0:2])
+    if tested:
+        ax.hist(rhos, bins=np.linspace(-1, 1, 2 * len(samples) + 1 if len(samples) <= 9 else 41),
+                color='#3b528b', edgecolor='white')
+    ax.set_xlim(-1, 1)
+    ax.set_xlabel('Spearman ρ across the samples (methylation against expression)')
+    ax.set_ylabel('genes')
+    ax.set_title(f'{tested:,} genes that vary in both, over {len(samples)} samples', fontsize=10)
+    side = fig.add_subplot(grid[1, 0:2]) if shown else None
+    if side is not None:
+        side.axis('off')
+        lines = ['Most negative: ' + ', '.join(bed[i][3] for i in negative),
+                 'Most positive: ' + ', '.join(bed[i][3] for i in positive)]
+        if best_p is not None:
+            lines.append(f'Smallest p possible with {len(samples)} samples: {2 / math.factorial(len(samples)):.3g}'
+                         if len(samples) <= 9 else '')
+        side.text(0, 0.9, '\n'.join(x for x in lines if x), va='top', fontsize=9, wrap=True)
+    cells = [grid[r, c] for r in range(2) for c in range(2, 4)]
+    for cell, i in zip(cells + [None] * 2, shown[:4]):
+        if cell is None:
+            break
+        a = fig.add_subplot(cell)
+        m, e = meth_rows[i], expr_rows[i]
+        xs = [math.log2(v + 1) if v is not None else None for v in e]
+        for s, x, y in zip(samples, xs, m):
+            if x is not None and y is not None:
+                a.plot(x, y, 'o', color='#21918c')
+                a.annotate(s, (x, y), fontsize=7, xytext=(3, 3), textcoords='offset points')
+        rho, p, n = found[i]
+        a.set_title(f'{bed[i][3]}: ρ {rho:.2f}, p {p:.2g}', fontsize=9)
+        a.set_xlabel('log2(expression + 1)', fontsize=8)
+        a.set_ylabel(f'methylation {where}', fontsize=8)
+    if title:
+        fig.suptitle(title, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close(fig)
+    return {'samples': samples, 'genes': len(bed), 'tested': tested,
+            'significant': sum(1 for v in q if v is not None and v < 0.05),
+            'smallest_p_possible': 2 / math.factorial(len(samples)) if len(samples) <= 9 else None,
+            'most_negative': [{'name': bed[i][3], 'rho': found[i][0], 'p': found[i][1], 'q': q[i]} for i in order[:10]
+                              if found[i][0] is not None],
+            'most_positive': [{'name': bed[i][3], 'rho': found[i][0], 'p': found[i][1], 'q': q[i]}
+                              for i in reversed(order) if found[i][0] is not None][:10]}
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -255,12 +448,24 @@ def main(argv: Optional[List[str]] = None) -> None:
     m.add_argument('--title', default='')
     m.add_argument('--where', default='over each gene')
     m.add_argument('--summary', help='also write what was found as JSON')
+    m.add_argument('--ranked', help='write each methylation track\'s genes ranked as PREFIX-N.csv')
+    g = sub.add_parser('genecorr', help='per gene, methylation against expression across samples')
+    g.add_argument('--genes', required=True)
+    g.add_argument('--expression', required=True, help='bigwig_means.py features table, a column per sample')
+    g.add_argument('--methylation', required=True, help='the same, the methylation tracks in the same order')
+    g.add_argument('-o', '--out', required=True)
+    g.add_argument('--table', required=True)
+    g.add_argument('--title', default='')
+    g.add_argument('--where', default='over each gene')
+    g.add_argument('--summary', help='also write what was found as JSON')
     a = p.parse_args(argv)
     if a.what == 'fingerprint':
         found = fingerprint(a.npz, a.out, a.metrics, a.title)
+    elif a.what == 'genecorr':
+        found = genecorr(a.genes, a.expression, a.methylation, a.out, a.table, a.title, a.where)
     else:
         found = methexpr(a.genes, a.expression, a.methylation, a.out, a.table, max(2, min(10, a.groups)),
-                         a.group_beds, a.title, a.where)
+                         a.group_beds, a.title, a.where, a.ranked)
     if a.summary:
         with open(a.summary, 'w', encoding='utf-8') as fh:
             json.dump(found, fh)
