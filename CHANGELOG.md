@@ -9,6 +9,8 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-11-14
+
 ### Fixed
 - **A methylation heatmap has its profiles back.** 0.14.1 left out the profiles plotHeatmap draws over
   each column, since it would have drawn them from the heatmap's filled-in matrix. They are back, drawn
