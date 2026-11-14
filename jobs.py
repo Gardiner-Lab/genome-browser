@@ -28,6 +28,8 @@ KINDS = {
     'profile': 'Profile around features, and heatmap',
     'correlation': 'Replicate check',
     'genes': 'Signal per feature (table)',
+    'fingerprint': 'Fingerprint (quality check)',
+    'methexpr': 'Methylation against expression',
     'compare': 'Comparing two tracks',
     'motif': 'Marking sequences on the genome',
     'bam': 'Preparing an upload (BAM to coverage)',
@@ -157,7 +159,7 @@ def _track_names(conn, rows) -> Dict[str, str]:
     for r in rows:
         p = _json(r['params'])
         ids.update(str(i) for i in (p.get('tracks') or []))
-        ids.update(str(p[k]) for k in ('a', 'b') if p.get(k))
+        ids.update(str(p[k]) for k in ('a', 'b', 'expression') if p.get(k))
     if not ids:
         return {}
     marks = ','.join('?' * len(ids))
@@ -174,6 +176,9 @@ def _about(kind: str, params: dict, result: dict, names: Dict[str, str]) -> str:
         return f"{names.get(str(params.get('a')), 'A')} against {names.get(str(params.get('b')), 'B')}"
     if kind == 'motif':
         return str(params.get('name') or 'sequence')
+    if kind == 'methexpr':
+        expression = names.get(str(params.get('expression')), 'an expression track')
+        return f'{listed} against {expression}'
     if kind in ('profile', 'genes'):
         over = ', '.join(result.get('regions') or []) or \
             ', '.join(r.get('type') or 'features' for r in params.get('regions') or [])

@@ -41,7 +41,11 @@ import feature_index
 import regions
 import signal_kind
 
-KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif')
+KINDS = ('profile', 'compare', 'correlation', 'genes', 'motif', 'fingerprint', 'methexpr')
+PROFILE_MODES = ('scale', 'start', 'end', 'center', 'summit')
+# Where a methylation-against-expression plot measures methylation: the gene, or the stretch before it.
+METHEXPR_REGIONS = {'body': 'over each gene', 'up1000': 'over the 1 kb before each gene',
+                    'up2000': 'over the 2 kb before each gene'}
 MAX_TRACKS = 12
 MAX_REGION_SETS = 4
 KEEP_DAYS = 7
@@ -205,6 +209,46 @@ def region_bed(path: str, kind: str, ftype: Optional[str], names: Optional[List[
     return n
 
 
+def summit_bed(path: str, names: Optional[List[str]], out: Path) -> Tuple[int, int]:
+    """
+    A BED track's peaks as their summits, one base each: a narrowPeak file's 10th column is the summit's
+    distance from the peak's start (-1 when not called). A peak without one is put at its middle.
+    Returns how many peaks, and how many of them had a summit.
+    """
+    import gzip
+    wanted = {n.strip().casefold() for n in (names or []) if n.strip()}
+    opener = gzip.open if open(path, 'rb').read(2) == b'\x1f\x8b' else open
+    n = with_summit = 0
+    with opener(path, 'rt', encoding='utf-8', errors='replace') as fh, open(out, 'w', encoding='utf-8') as w:
+        for line in fh:
+            if not line.strip() or line.startswith(('#', 'track', 'browser')):
+                continue
+            f = line.rstrip('\r\n').split('\t') if '\t' in line else line.split()
+            try:
+                chrom, start, end = f[0], int(f[1]), int(f[2])
+            except (IndexError, ValueError):
+                continue
+            if end <= start:
+                continue
+            name = f[3] if len(f) > 3 and f[3] not in ('', '.') else f'{chrom}:{start + 1}'
+            if wanted and name.casefold() not in wanted:
+                continue
+            at = (start + end) // 2
+            if len(f) >= 10:
+                try:
+                    offset = int(f[9])
+                except ValueError:
+                    offset = -1
+                if 0 <= offset < end - start:
+                    at = start + offset
+                    with_summit += 1
+            label = re.sub(r'\s+', '_', name)
+            strand = f[5] if len(f) > 5 and f[5] in ('+', '-') else '+'
+            w.write(f'{chrom}\t{at}\t{at + 1}\t{label}\t0\t{strand}\n')
+            n += 1
+    return n, with_summit
+
+
 def _label(name: str) -> str:
     """A track name as deepTools shows it in a legend: no characters that break its arguments."""
     return re.sub(r'\s+', ' ', name).strip()[:60] or 'track'
@@ -284,19 +328,26 @@ def _as(tracks: List[dict]) -> List[str]:
 
 def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], work: Path) -> dict:
     sets, names, found = [], [], []
+    mode = params.get('mode') if params.get('mode') in PROFILE_MODES else 'scale'
+    summits = [0, 0]
     for i, rs in enumerate(params.get('regions') or []):
         rt = region_tracks.get(rs.get('track'))
         if rt is None:
             continue
         bed = work / f'regions-{i + 1}.bed'
-        n = region_bed(rt['file_path'], rt['type'], rs.get('type') or None, rs.get('names'), bed)
+        if mode == 'summit' and rt['type'] == 'bed':
+            # Peaks: each one's summit (a narrowPeak file's 10th column), or its middle without one.
+            n, with_summit = summit_bed(rt['file_path'], rs.get('names'), bed)
+            summits[0] += n
+            summits[1] += with_summit
+        else:
+            n = region_bed(rt['file_path'], rt['type'], rs.get('type') or None, rs.get('names'), bed)
         if n:
             sets.append(bed)
             names.append(rs.get('type') or rt['name'])
             found.append(n)
     if not sets:
         raise AnalysisError('None of the chosen features were found: choose another type, or check the names.')
-    mode = params.get('mode') if params.get('mode') in ('scale', 'start', 'end') else 'scale'
     before, after = (int(_clamp(params.get(k), 0, 20000, 2000)) for k in ('before', 'after'))
     body = int(_clamp(params.get('body'), 500, 20000, 3000))
     binsize = int(_clamp(params.get('bin'), 10, 5000, 100))
@@ -323,7 +374,8 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     if mode == 'scale':
         args += ['-m', str(body)]
     else:
-        args += ['--referencePoint', 'TSS' if mode == 'start' else 'TES']
+        # A summit is a one-base feature (summit_bed), or a gene's middle where it has none: its centre.
+        args += ['--referencePoint', {'start': 'TSS', 'end': 'TES'}.get(mode, 'center')]
     # How long computeMatrix is likely to take, for the progress bar only: about 0.05 ms for each
     # feature, track and step (30,000 genes, one track, 70 steps took 95-118 s in the worker).
     steps = (before + after + (body if mode == 'scale' else 0)) / binsize
@@ -348,7 +400,7 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     title = (params.get('title') or '').strip()[:100]
     start_label, end_label = ('start', 'end')
     common = ['--regionsLabel', *labels, '--startLabel', start_label, '--endLabel', end_label,
-              '--refPointLabel', 'start' if mode == 'start' else 'end']
+              '--refPointLabel', {'start': 'start', 'end': 'end', 'center': 'middle'}.get(mode, 'summit')]
     y_label = 'methylation level' if all(levels) else 'mean signal'
     profile_args = ['plotProfile', '-m', 'matrix.gz', '-o', 'profile.svg', '--perGroup', *common,
                     '--plotTitle', title or ('Methylation' if all(levels) else 'Mean signal'), '--yAxisLabel', y_label]
@@ -369,10 +421,14 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
             _measure(['interpolate', str(work / 'matrix.gz'), '--samples',
                       *[str(i + 1) for i, lv in enumerate(levels) if lv], '-o', str(work / heat_matrix)],
                      'Drawing the heatmap', span=(0.9, 0.9))
-        heat_args = ['plotHeatmap', '-m', heat_matrix, '-o', 'heatmap.png', '--dpi', '110', *common,
+        # With k-means the rows are regrouped into clusters, which deepTools names itself: our names for
+        # the feature sets no longer apply, and plotHeatmap refuses them ("length new labels").
+        heat_common = common[1 + len(labels):] if k >= 2 else common
+        heat_args = ['plotHeatmap', '-m', heat_matrix, '-o', 'heatmap.png', '--dpi', '110', *heat_common,
                      '--colorMap', colormap, '--heatmapHeight', '18', '--plotTitle', title or 'Signal per feature']
         if k >= 2:
-            heat_args += ['--kmeans', str(k)]
+            # Each feature's cluster, as plotHeatmap drew them: for gene lists (_clusters).
+            heat_args += ['--kmeans', str(k), '--outFileSortedRegions', 'heatmap-regions.bed']
         if any(levels):
             # A row with no cytosine measured anywhere: light grey, not deepTools' black, which reads as
             # a value at the bottom of the scale.
@@ -387,8 +443,16 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         _run([sys.executable, str(Path(__file__).with_name('bigwig_means.py')), *heat_args], work,
              'Drawing the heatmap', at=0.9, recipe=['python3', 'bigwig_means.py', *heat_args])
         files.insert(1, 'heatmap.png')
+        if k >= 2:
+            clusters = _clusters(work)
+            files += ['clusters.csv'] + [c['file'] for c in clusters]
     out = _measured_as(tracks, {'files': files, 'regions': labels, 'skip_zeros': skip_zeros,
                                 'missing_as_zero': missing_as_zero, 'coverage_tracks': levels.count(False)})
+    out['mode'] = mode
+    if mode == 'summit':
+        out['summits'] = {'peaks': summits[0], 'with_summit': summits[1]}
+    if params.get('heatmap') and int(_clamp(params.get('kmeans'), 0, 8, 0)) >= 2:
+        out['clusters'] = [{k: c[k] for k in ('cluster', 'count', 'file', 'first')} for c in clusters]
     if params.get('heatmap') and any(levels):
         out['heatmap_filled'] = [t['name'] for t in tracks if _is_level(t)]
     if left_out:
@@ -431,6 +495,9 @@ def _off_chromosome_ends(matrix: Path, tracks: List[dict], mode: str, before: in
             minus = strand == '-'
             if mode == 'scale':
                 left, right = (s - after, e + before) if minus else (s - before, e + after)
+            elif mode in ('center', 'summit'):
+                at = (s + e) // 2
+                left, right = (at - after, at + before) if minus else (at - before, at + after)
             else:
                 # The reference point: a feature's start (TSS) or end (TES), by its strand.
                 at = (e if minus else s) if mode == 'start' else (s if minus else e)
@@ -438,6 +505,164 @@ def _off_chromosome_ends(matrix: Path, tracks: List[dict], mode: str, before: in
             past_start, past_end = max(0, -left), max(0, right - sizes[chrom])
             if past_start or past_end:
                 out.append([name, chrom, s + 1, e, strand, past_start, past_end])
+    return out
+
+
+def _clusters(work: Path) -> List[dict]:
+    """
+    The heatmap's k-means clusters as lists: clusters.csv (every feature, its cluster), and for each
+    cluster cluster-N.txt, its features' names one to a line, to paste into a GO-enrichment tool.
+    From plotHeatmap's --outFileSortedRegions, whose 13th column is the cluster ('cluster_1', ...).
+    """
+    found: Dict[str, List[list]] = {}
+    with open(work / 'heatmap-regions.bed', encoding='utf-8') as fh:
+        for line in fh:
+            if line.startswith('#') or not line.strip():
+                continue
+            f = line.rstrip('\n').split('\t')
+            group = f[12] if len(f) > 12 else 'cluster_1'
+            found.setdefault(group, []).append([f[3], f[0], int(f[1]) + 1, int(f[2]), f[5] if len(f) > 5 else '.'])
+    order = sorted(found, key=lambda g: int(re.sub(r'\D', '', g) or 0))
+    out = []
+    with open(work / 'clusters.csv', 'w', newline='', encoding='utf-8') as fh:
+        w = csv.writer(fh)
+        w.writerow(['name', 'chrom', 'start', 'end', 'strand', 'cluster'])
+        for n, group in enumerate(order, 1):
+            rows = found[group]
+            w.writerows(r + [n] for r in rows)
+            name = f'cluster-{n}.txt'
+            # A feature in several sets (a gene in two lists) once only.
+            names = list(dict.fromkeys(r[0] for r in rows))
+            (work / name).write_text('\n'.join(names) + '\n', encoding='utf-8')
+            out.append({'cluster': n, 'count': len(rows), 'file': name, 'first': names[:5], 'rows': rows})
+    return out
+
+
+def cluster_bed(work: Path, cluster: int) -> str:
+    """One cluster's features as a BED file's text (for a track of them), from clusters.csv."""
+    lines = []
+    with open(work / 'clusters.csv', newline='', encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            if int(row['cluster']) == cluster:
+                lines.append(f"{row['chrom']}\t{int(row['start']) - 1}\t{row['end']}\t{row['name']}\t0\t"
+                             f"{row['strand'] if row['strand'] in ('+', '-') else '.'}\n")
+    return ''.join(lines)
+
+
+def _plot(args: List[str], work: Path, what: str, at: float) -> None:
+    """Run a plots.py figure (in its own process, as matplotlib wants), recorded for the recipe."""
+    _run([sys.executable, str(Path(__file__).with_name('plots.py')), *args], work, what, at=at,
+         recipe=['python3', 'plots.py', *args])
+
+
+def run_fingerprint(params: dict, tracks: List[dict], work: Path) -> dict:
+    # A methylation level is not a count of reads: how evenly it is spread says nothing of enrichment.
+    skipped = [t['name'] for t in tracks if _is_level(t)]
+    tracks = [t for t in tracks if not _is_level(t)]
+    if not tracks:
+        raise AnalysisError('A fingerprint is of coverage tracks (reads): the tracks chosen are all methylation tracks.')
+    binsize = int(_clamp(params.get('bin'), 100, 100_000, 1000))
+    labels = [_label(t['name']) for t in tracks]
+    _measure(['bins', *[t['file_path'] for t in tracks], '--labels', *labels, '-bs', str(binsize),
+              '-o', str(work / 'fingerprint.npz')], 'Summing each track in bins', span=(0.0, 0.85))
+    title = (params.get('title') or '').strip()[:100]
+    _plot(['fingerprint', 'fingerprint.npz', '-o', 'fingerprint.svg', '--metrics', 'fingerprint-metrics.tab',
+           '--summary', 'fingerprint.json', '--title', title or f'Fingerprint, {binsize:,} bp bins'],
+          work, 'Drawing the fingerprint', at=0.85)
+    found = json.loads((work / 'fingerprint.json').read_text())
+    out = {'files': ['fingerprint.svg', 'fingerprint-metrics.tab'], 'bin': binsize, 'metrics': found}
+    if skipped:
+        out['skipped_methylation'] = skipped
+    return out
+
+
+def upstream_bed(src: Path, out: Path, length: int, sizes: Dict[str, int]) -> None:
+    """
+    For each feature of a BED file, the ``length`` bases before it by its strand (its promoter, for a
+    gene), cut at the chromosome's ends; a row for every feature, in order, even when nothing is left.
+    """
+    with open(src, encoding='utf-8') as fh, open(out, 'w', encoding='utf-8', newline='\n') as w:
+        for line in fh:
+            f = line.rstrip('\n').split('\t')
+            s, e = int(f[1]), int(f[2])
+            if f[5] == '-':
+                a, b = e, min(e + length, sizes.get(f[0], e + length))
+            else:
+                a, b = max(0, s - length), s
+            w.write('\t'.join([f[0], str(a), str(max(a, b))] + f[3:]) + '\n')
+
+
+def run_methexpr(params: dict, expression: dict, tracks: List[dict], region_tracks: Dict[str, dict],
+                 work: Path) -> dict:
+    not_level = [t['name'] for t in tracks if not _is_level(t)]
+    if not_level:
+        raise AnalysisError('Not methylation tracks: ' + ', '.join(not_level) + '. Tick methylation tracks only '
+                            '(a track’s Details says which it is), and choose the RNA-seq track as the expression.')
+    if _is_level(expression):
+        raise AnalysisError('The expression track is a methylation track: choose an RNA-seq coverage track.')
+    rs = (params.get('regions') or [{}])[0]
+    rt = region_tracks.get(rs.get('track'))
+    if rt is None:
+        raise AnalysisError('Choose the features: the genes.')
+    bed = work / 'regions.bed'
+    n = region_bed(rt['file_path'], rt['type'], rs.get('type') or None, rs.get('names'), bed)
+    if n < 10:
+        raise AnalysisError('Fewer than ten of the chosen features were found: choose the genes.')
+    where = params.get('region') if params.get('region') in METHEXPR_REGIONS else 'body'
+    groups = int(_clamp(params.get('groups'), 2, 10, 5))
+    meth_bed = bed
+    if where != 'body':
+        import pyBigWig
+        bw = pyBigWig.open(expression['file_path'])
+        try:
+            sizes = dict(bw.chroms() or {})
+        finally:
+            bw.close()
+        meth_bed = work / 'regions-upstream.bed'
+        upstream_bed(bed, meth_bed, int(where[2:]), sizes)
+    _measure(['features', str(bed), expression['file_path'], '--labels', _label(expression['name']),
+              '-o', str(work / 'expression.tab')], 'Measuring expression', span=(0.0, 0.25))
+    levels = [_source(t) for t in tracks]
+    _measure(['features', str(meth_bed), *levels, '--labels', *[_label(t['name']) for t in tracks],
+              '--as', *['level'] * len(tracks), '-o', str(work / 'methylation.tab')],
+             'Measuring methylation', span=(0.25, 0.55))
+    title = (params.get('title') or '').strip()[:100]
+    _plot(['methexpr', '--genes', 'regions.bed', '--expression', 'expression.tab', '--methylation', 'methylation.tab',
+           '-o', 'methexpr.svg', '--table', 'methylation-vs-expression.csv', '--groups', str(groups),
+           '--group-beds', 'group', '--where', METHEXPR_REGIONS[where], '--summary', 'methexpr.json',
+           *(['--title', title] if title else [])], work, 'Drawing methylation against expression', at=0.55)
+    found = json.loads((work / 'methexpr.json').read_text())
+    files = ['methexpr.svg', 'methylation-vs-expression.csv']
+    if params.get('group_profile') is not False and found['beds']:
+        # The classic figure: the level along the genes of each expression group, one line a group.
+        _run(['computeMatrix', 'scale-regions', '-S', *levels, '-R', *[b['file'] for b in found['beds']],
+              '--samplesLabel', *[_label(t['name']) for t in tracks], '-b', '2000', '-a', '2000', '-m', '3000',
+              '-bs', '100', '-p', str(THREADS), '--skipZeros', '-o', 'groups-matrix.gz', '--quiet'],
+             work, 'Computing the profile of each group', at=0.65, until=0.95, expect=n * len(tracks) * 70 * 5e-5)
+        _run(['plotProfile', '-m', 'groups-matrix.gz', '-o', 'groups-profile.svg',
+              '--regionsLabel', *[b['label'] for b in found['beds']], '--startLabel', 'start', '--endLabel', 'end',
+              '--yAxisLabel', 'methylation level', '--plotTitle', 'Methylation along the genes of each expression group',
+              '--colors', *_group_colours(found['beds'])], work, 'Drawing the profile of each group', at=0.95)
+        files.insert(1, 'groups-profile.svg')
+        files.append('groups-matrix.gz')
+    return _measured_as(tracks, {'files': files, 'count': n, 'region': where, 'where': METHEXPR_REGIONS[where],
+                                 'expression': expression['name'], 'groups': found['groups'],
+                                 'no_expression_value': found['no_expression_value'], 'tracks': found['tracks']})
+
+
+def _group_colours(beds: List[dict]) -> List[str]:
+    """Grey for the no-reads group, then viridis from lowest to highest expression, as the boxes."""
+    import matplotlib
+    matplotlib.use('Agg')
+    from matplotlib import cm, colors
+    expressed = [b for b in beds if not b['file'].endswith('-0.bed')]
+    out = []
+    for b in beds:
+        if b['file'].endswith('-0.bed'):
+            out.append('#bbbbbb')
+        else:
+            i = expressed.index(b)
+            out.append(colors.to_hex(cm.viridis(0.15 + 0.75 * i / max(1, len(expressed) - 1))))
     return out
 
 
@@ -574,7 +799,7 @@ def run_job(conn, data_root: Path, job) -> None:
     _PROGRESS[0] = _progress_recorder(conn, job['id'])
     try:
         ids = list(params.get('tracks') or []) + [r.get('track') for r in params.get('regions') or []]
-        ids = [i for i in ids + [params.get('a'), params.get('b')] if i]
+        ids = [i for i in ids + [params.get('a'), params.get('b'), params.get('expression')] if i]
         rows = {}
         if ids:
             rows = {r['id']: dict(r) for r in conn.execute(
@@ -599,6 +824,17 @@ def run_job(conn, data_root: Path, job) -> None:
             if not coverage:
                 raise AnalysisError('Choose at least one coverage track.')
             result = run_genes(params, coverage, region_tracks, work)
+        elif kind == 'fingerprint':
+            if not coverage:
+                raise AnalysisError('Choose at least one coverage track.')
+            result = run_fingerprint(params, coverage, work)
+        elif kind == 'methexpr':
+            expression = rows.get(params.get('expression'))
+            if not expression or expression['type'] != 'bigwig' or expression['track_status'] != 'ready':
+                raise AnalysisError('Choose the expression track: an RNA-seq coverage track.')
+            if not coverage:
+                raise AnalysisError('Tick at least one methylation track.')
+            result = run_methexpr(params, expression, coverage, region_tracks, work)
         elif kind == 'motif':
             # Marking a sequence on a big genome: too slow to hold a request open, so it waits here
             # with the rest. It makes its own BED track (tracks.py), as 'compare' makes a BigWig one.
@@ -683,6 +919,7 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
     version = _deeptools_version()
     inputs = sorted(set(names[p] for p in names if p in {a for c in commands for a in c}))
     uses_means = any(c[:2] == ['python3', 'bigwig_means.py'] for c in commands)
+    uses_plots = any(c[:2] == ['python3', 'plots.py'] for c in commands)
     run = ['#!/bin/sh', '# Makes the figure again: run in a folder holding the files below.', 'set -e', '']
     run += [shell(c) + '\n' for c in commands]
     if job['kind'] == 'genes':
@@ -703,6 +940,10 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
                    'methylation track without its strand signs (`unsigned`); and the heatmap, drawn by deepTools’ '
                    'plotHeatmap with the tracks’ names turned 45 degrees (`heatmap`). It needs pyBigWig and numpy, which '
                    'come with deepTools.']
+    if uses_plots:
+        readme += ['- `plots.py` (included): the figures deepTools has no tool for with coverage (BigWig) tracks: '
+                   'the fingerprint, and methylation against expression. It needs numpy, scipy and matplotlib, which '
+                   'come with deepTools.']
     readme += ['',
                '## Run', '', 'In a folder with the inputs and these files:', '', '```sh', 'sh run.sh', '```', '',
                'The commands, as they were run:', '', '```sh'] + [shell(c) for c in commands] + ['```', '',
@@ -717,6 +958,8 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
             z.writestr('name_features.py', NAME_FEATURES)
         if uses_means:
             z.write(Path(__file__).with_name('bigwig_means.py'), 'bigwig_means.py')
+        if uses_plots:
+            z.write(Path(__file__).with_name('plots.py'), 'plots.py')
     (work / 'recipe.json').write_text(json.dumps({'commands': [shell(c) for c in commands], 'inputs': inputs,
                                                   'regions': regions, 'deeptools': version}))
 
@@ -803,12 +1046,15 @@ def register_analysis(app) -> None:
             sets = [r for r in (body.get('regions') or []) if isinstance(r, dict)][:MAX_REGION_SETS]
             params = {k: body.get(k) for k in ('mode', 'before', 'after', 'body', 'bin', 'heatmap', 'kmeans',
                                                 'colormap', 'title', 'method', 'operation', 'pseudocount', 'name',
-                                                'skip_zeros', 'missing_as_zero')}
+                                                'skip_zeros', 'missing_as_zero', 'region', 'groups',
+                                                'group_profile')}
             params['tracks'] = tracks
             params['regions'] = [{'track': str(r.get('track') or ''), 'type': str(r.get('type') or '')[:80] or None,
                                   'names': [str(n)[:80] for n in (r.get('names') or [])][:5000]} for r in sets]
             params['a'], params['b'] = str(body.get('a') or ''), str(body.get('b') or '')
-            ids = tracks + [r['track'] for r in params['regions']] + [x for x in (params['a'], params['b']) if x]
+            params['expression'] = str(body.get('expression') or '') if kind == 'methexpr' else ''
+            ids = tracks + [r['track'] for r in params['regions']] + \
+                [x for x in (params['a'], params['b'], params['expression']) if x]
             try:
                 rows = _viewable(conn, member, genome_id, ids)
             except AnalysisError as exc:
@@ -824,7 +1070,12 @@ def register_analysis(app) -> None:
                 return jsonify({'error': 'Choose at least one coverage track.'}), 400
             if any(rows[t]['type'] != 'bigwig' for t in tracks):
                 return jsonify({'error': 'Only coverage (BigWig) tracks can be measured.'}), 400
-            if kind in ('profile', 'genes') and not params['regions']:
+            if kind == 'methexpr':
+                if not params['expression'] or rows[params['expression']]['type'] != 'bigwig':
+                    return jsonify({'error': 'Choose the expression track: an RNA-seq coverage track.'}), 400
+                if params['expression'] in tracks:
+                    return jsonify({'error': 'The expression track is ticked as a methylation track too.'}), 400
+            if kind in ('profile', 'genes', 'methexpr') and not params['regions']:
                 return jsonify({'error': 'Choose the features: a gene annotation or BED track, and a type.'}), 400
             busy = conn.execute("SELECT count(*) FROM analysis_jobs WHERE member = ? AND state IN ('queued', 'running')",
                                 (member,)).fetchone()[0] if conn.execute(
@@ -873,12 +1124,40 @@ def register_analysis(app) -> None:
         if not path.exists():
             abort(404)
         types = {'.svg': 'image/svg+xml', '.png': 'image/png', '.csv': 'text/csv', '.tab': 'text/plain',
-                 '.gz': 'application/gzip'}
+                 '.txt': 'text/plain', '.gz': 'application/gzip'}
         res = send_file(str(path), mimetype=types.get(path.suffix, 'application/octet-stream'),
                         as_attachment=path.suffix not in ('.svg', '.png'), download_name=name, max_age=0)
         res.headers['X-Content-Type-Options'] = 'nosniff'
         res.headers['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
         return res
+
+    @app.route('/api/analyses/<job_id>/clusters/<int:cluster>/track', methods=['POST'])
+    def analysis_cluster_track(job_id, cluster):
+        """One k-means cluster of a heatmap, kept as a BED track of the member's lab: to view, or to draw
+        a profile or a table of it."""
+        import tracks as tracks_module
+        job, _ = _own_job(job_id)
+        result = json.loads(job['result'] or '{}')
+        if job['state'] != 'done' or cluster not in [c['cluster'] for c in result.get('clusters') or []]:
+            abort(404)
+        member = identity.require_member()
+        owner_lab = labs_reader.current_lab(member)
+        if not owner_lab:
+            return jsonify({'error': 'You must belong to a lab to keep a new track.'}), 400
+        text = cluster_bed(job_dir(Path(app.config['DATA_ROOT']), job_id), cluster)
+        if not text:
+            return jsonify({'error': 'That cluster has no features.'}), 400
+        body = request.get_json(silent=True) or {}
+        params = json.loads(job['params'] or '{}')
+        name = (str(body.get('name') or '').strip()[:200] or
+                f"{(params.get('title') or '').strip() or 'Heatmap'}, cluster {cluster} of {len(result['clusters'])}")
+        conn = _db()
+        try:
+            made = tracks_module.add_bed_track(conn, Path(app.config['DATA_ROOT']), job['genome_id'], owner_lab,
+                                               member, name, text)
+        finally:
+            conn.close()
+        return jsonify(made), 201
 
     @app.route('/api/analyses/<job_id>/recipe')
     def analysis_recipe(job_id):

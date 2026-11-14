@@ -1137,6 +1137,31 @@ def build_motif_track(conn, data_root: Path, genome, owner_lab: str, member: str
             'searched': [q.name for q in queries]}
 
 
+def add_bed_track(conn, data_root: Path, genome_id: str, owner_lab: str, member: str, name: str,
+                  text: str) -> dict:
+    """A BED track of the member's lab made from text the suite wrote (a heatmap's cluster)."""
+    track_id = uuid.uuid4().hex
+    scratch_dir = data_root / 'scratch' / f'bed-{track_id}'
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        bed_path = scratch_dir / f'{_safe_name(name, default="features")}.bed'
+        bed_path.write_text(text, encoding='utf-8', newline='')
+        stored_path = _store_file(data_root, track_id, bed_path)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+    try:
+        feature_index.build(stored_path, regions.feature_parser('bed'))
+    except (OSError, sqlite3.Error):
+        pass                       # the first view builds it instead
+    serving.prepare_feature_track(stored_path, 'bed')
+    conn.execute(
+        'INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, file_path, created_by) '
+        "VALUES (?, ?, ?, 'bed', ?, ?, 'ready', ?, ?)",
+        (track_id, genome_id, name, owner_lab, _initial_visibility(owner_lab), str(stored_path), member))
+    conn.commit()
+    return {**_track_body(track_id, name, 'bed', owner_lab), 'features': text.count('\n')}
+
+
 def run_motif_job(conn, data_root: Path, job, params: dict) -> dict:
     """The queued form of the above: the worker calls this through analysis.run_job."""
     genome = conn.execute('SELECT * FROM reference_genomes WHERE id = ?', (job['genome_id'],)).fetchone()

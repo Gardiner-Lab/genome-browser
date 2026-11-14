@@ -906,6 +906,8 @@ def _browser_html(static_prefix: str) -> str:
             <option value="scale" selected>The whole feature, scaled to one length</option>
             <option value="start">Its start (transcription start, for genes)</option>
             <option value="end">Its end</option>
+            <option value="center">Its middle</option>
+            <option value="summit">Its summit (peaks: a narrowPeak BED; else the middle)</option>
           </select>
         </label>
         <label class="gb-field">With, either side
@@ -914,7 +916,7 @@ def _browser_html(static_prefix: str) -> str:
             <option value="5000">5 kb</option><option value="10000">10 kb</option>
           </select>
         </label>
-        <label class="gb-field">Scaled length
+        <label class="gb-field" title="Only for the whole feature, scaled">Scaled length
           <select name="body">
             <option value="1000">1 kb</option><option value="3000" selected>3 kb</option><option value="5000">5 kb</option>
           </select>
@@ -927,10 +929,11 @@ def _browser_html(static_prefix: str) -> str:
       </div>
       <div data-for="profile" class="gb-circos-row">
         <label class="gb-check"><input type="checkbox" name="heatmap" checked> Heatmap too: every feature a row, sorted by signal</label>
-        <label class="gb-field">Group the rows
+        <label class="gb-field" title="k-means: features whose rows look alike are put together. Each cluster's features can be downloaded as a list, or kept as a track.">Group the rows
           <select name="kmeans">
             <option value="0" selected>No: sorted only</option><option value="2">Into 2 clusters</option>
             <option value="3">Into 3 clusters</option><option value="4">Into 4 clusters</option>
+            <option value="5">Into 5 clusters</option><option value="6">Into 6 clusters</option>
           </select>
         </label>
         <label class="gb-field">Colours
@@ -989,6 +992,36 @@ def _browser_html(static_prefix: str) -> str:
             <option value="50000">50 kb</option><option value="100000">100 kb</option>
           </select>
         </label>
+      </div>
+      <div data-for="fingerprint" class="gb-circos-row">
+        <label class="gb-field">In bins of
+          <select name="fp_bin">
+            <option value="500">500 bp</option><option value="1000" selected>1 kb</option>
+            <option value="5000">5 kb</option><option value="10000">10 kb</option>
+          </select>
+        </label>
+      </div>
+      <div data-for="methexpr">
+        <p class="gb-hint">Tick the methylation tracks above (CG, CHG, CHH: each gets its own row of plots), and
+          choose the RNA-seq track for expression here.</p>
+        <div class="gb-circos-row">
+          <label class="gb-field">Expression from <select id="analyse-expression"></select></label>
+          <label class="gb-field">Methylation
+            <select name="me_region">
+              <option value="body" selected>Over the gene (its body)</option>
+              <option value="up1000">Over the 1 kb before it (promoter)</option>
+              <option value="up2000">Over the 2 kb before it</option>
+            </select>
+          </label>
+          <label class="gb-field">Expressed genes in
+            <select name="me_groups">
+              <option value="4">4 groups</option><option value="5" selected>5 groups</option>
+              <option value="10">10 groups</option>
+            </select>
+          </label>
+        </div>
+        <label class="gb-check"><input type="checkbox" name="me_profile" checked> A profile of each expression group
+          too (methylation along the genes, one line a group; a few minutes more)</label>
       </div>
       <p data-for="selection" class="gb-hint">Selection: <b id="analyse-selection-text"></b></p>
       <label data-for="links" class="gb-field">Links track

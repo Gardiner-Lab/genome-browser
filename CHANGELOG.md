@@ -9,6 +9,26 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Methylation against expression** (Analyse). Each gene's methylation level, from the methylation tracks
+  ticked, over the gene or the 1 or 2 kb before it, against its expression, the mean coverage of an RNA-seq
+  track over it. Genes are grouped (no reads, then 4, 5 or 10 equal groups by expression): box plots of the
+  level per group, every gene as a point with Spearman's correlation, a table of every gene, and a profile
+  of each group along the genes. Drawn by the new `plots.py methexpr`, which the recipe carries.
+- **Fingerprint** (Analyse), a quality check: each coverage track's bins sorted by signal against the running
+  share of its signal, with the share of empty bins, the share of signal in the top 1% of bins and the elbow
+  point. deepTools' plotFingerprint reads BAM files only, so it is drawn from the tracks by `plots.py
+  fingerprint`. Methylation tracks are left out.
+- **Profiles centred on a feature's middle, or a peak's summit** (a narrowPeak BED's 10th column; a peak
+  without one at its middle), beside its start and end.
+- **A heatmap's k-means clusters as lists:** clusters.csv, and each cluster's names one to a line (for a
+  GO-enrichment tool), and *Keep cluster N as a track*, a BED track of the lab to view or analyse again.
+  Up to 6 clusters.
+
+### Fixed
+- **Grouping a heatmap's rows into clusters failed** ("length new labels != length original labels"):
+  plotHeatmap was given the feature sets' names, which no longer apply once the rows are regrouped.
+
 ## [0.14.2] - 2026-11-14
 
 ### Fixed
