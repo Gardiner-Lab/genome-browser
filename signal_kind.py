@@ -82,6 +82,36 @@ def ensure(conn, row) -> str:
     return kind
 
 
+def check_all(conn, say=print) -> dict:
+    """
+    Every ready coverage track not yet looked at: found coverage or methylation, and for a methylation
+    track that gives minus-strand cytosines a minus sign, its copy without signs made now rather than
+    at its first analysis. The worker runs it on starting, so tracks added before an update are
+    checked then. Returns the counts; ``say`` is told of each methylation track and any trouble.
+    """
+    counts = {COVERAGE: 0, METHYLATION: 0, 'failed': 0}
+    rows = conn.execute("SELECT * FROM tracks WHERE type = 'bigwig' AND track_status = 'ready' "
+                        'AND signal IS NULL').fetchall()
+    for row in rows:
+        try:
+            if not row['file_path'] or not Path(row['file_path']).exists():
+                raise FileNotFoundError(row['file_path'])
+            kind = detect(row['file_path'])
+            conn.execute("UPDATE tracks SET signal = ?, signal_set_by = 'detected' WHERE id = ? AND signal IS NULL",
+                         (kind, row['id']))
+            conn.commit()
+            counts[kind] += 1
+            if kind == METHYLATION:
+                signed = is_signed(row['file_path'])
+                if signed:
+                    level_file(row['file_path'])
+                say(f"methylation track: {row['name']}" + (' (strand signs: copy without them made)' if signed else ''))
+        except Exception as exc:
+            counts['failed'] += 1
+            say(f"could not check the track {row['name']}: {exc}")
+    return counts
+
+
 def is_signed(path: str) -> bool:
     """Whether any value is below zero (minus-strand cytosines marked with a minus sign)."""
     # Not the header's minVal: pyBigWig gives it as a whole number, so -0.8 reads 0. Each

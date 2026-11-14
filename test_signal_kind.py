@@ -226,3 +226,29 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
     profile = next(a for a in runs if a[0] == 'plotProfile')
     assert profile[profile.index('--yAxisLabel') + 1] == 'methylation level'
     assert out['coverage_tracks'] == 0 and out['methylation'] == ['CG']
+
+
+def test_existing_tracks_are_checked_when_the_worker_starts(world):
+    w = world
+    cg = _add_cg(w)
+    conn = db.connect(w['root'] / 'genome.db')
+    try:
+        conn.execute("INSERT INTO tracks (id, genome_id, name, type, owner_lab, visibility, track_status, file_path, "
+                     "created_by) VALUES ('gone', ?, 'Gone', 'bigwig', 'labA', 'lab_only', 'ready', '/nowhere.bw', 'alice')",
+                     (w['genome'],))
+        conn.commit()
+        said = []
+        counts = signal_kind.check_all(conn, said.append)
+        assert counts == {'coverage': 3, 'methylation': 1, 'failed': 1}
+        assert said[0] == 'methylation track: CG (strand signs: copy without them made)'
+        assert 'Gone' in said[1]
+        assert (w['root'] / 'tracks' / 'CG.level.bw').exists()
+        kinds = dict(conn.execute("SELECT name, signal FROM tracks WHERE type = 'bigwig'").fetchall())
+        assert kinds == {'WT': 'coverage', 'MUT': 'coverage', 'THEIRS': 'coverage', 'CG': 'methylation', 'Gone': None}
+        # Run again, only what is left is looked at; a member's choice is never changed.
+        conn.execute("UPDATE tracks SET signal = 'coverage', signal_set_by = 'member' WHERE id = ?", (cg,))
+        conn.commit()
+        assert signal_kind.check_all(conn, said.append) == {'coverage': 0, 'methylation': 0, 'failed': 1}
+        assert conn.execute('SELECT signal FROM tracks WHERE id = ?', (cg,)).fetchone()[0] == 'coverage'
+    finally:
+        conn.close()

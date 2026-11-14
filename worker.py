@@ -55,6 +55,7 @@ import analysis
 import bundled
 import db
 import primer_check
+import signal_kind
 
 # How long to wait before polling again when the queue is empty or the
 # free-disk floor is below the safety floor. Short enough that an accepted job
@@ -310,6 +311,15 @@ def main() -> None:
                 print(f'[genome-worker] added the bundled TAIR10 / Araport11 genome ({added}).', flush=True)
         except Exception as exc:  # never stop the worker over it; an administrator can upload it
             print(f'[genome-worker] could not add the bundled genome: {exc}', flush=True)
+        # Coverage tracks added before methylation tracks were told apart (signal_kind.py): each
+        # found coverage or methylation now, so every analysis measures it the right way.
+        try:
+            found = signal_kind.check_all(conn, lambda text: print(f'[genome-worker] {text}', flush=True))
+            if any(found.values()):
+                print(f"[genome-worker] checked existing coverage tracks: {found['coverage']} coverage, "
+                      f"{found['methylation']} methylation, {found['failed']} could not be read.", flush=True)
+        except Exception as exc:  # never stop the worker over it; each track is checked when first listed
+            print(f'[genome-worker] could not check existing tracks: {exc}', flush=True)
         # A BLAST database for checking primers against each genome that has none yet, made in turn
         # when nothing else is waiting (primer_check.py).
         try:

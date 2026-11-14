@@ -7,7 +7,7 @@ until the suite is updated to use it.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.14.0] - 2026-11-14
 
 ## [Unreleased]
 
@@ -24,6 +24,10 @@ and the project uses [semantic versioning](https://semver.org/).
   makes the copy without signs (`bigwig_means.py unsigned`) and measures with `--as level`.
   On the GEO CG tracks: transposon bodies 0.65, gene bodies 0.14 (they read about 0 before), and the
   table matched values taken straight from the file for 2,000 of 2,000 transposons.
+- **Tracks already there are checked on update.** When the genome worker starts, every ready coverage
+  track not yet looked at is found coverage or methylation, and a signed methylation track's copy
+  without signs is made then, not at its first analysis. Its log names each methylation track found.
+  A member's own choice in Details is never changed.
 - Help, *Methylation tracks*, rewritten to say what the browser does and what is still the lab's to
   get right (one context per track, enough reads, steps of 50 bp or more, one file per strand).
 
