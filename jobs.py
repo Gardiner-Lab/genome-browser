@@ -232,8 +232,10 @@ def _page_html(static: str, mount: str, embed: bool) -> str:
   <main class="jobs">
     <div class="jobs-head">
       <h1>My jobs</h1>
-      <p class="jobs-hint">Analyses and uploads you started in the Genome Browser. The genome worker runs one at a
-        time, in the order they were asked for. Finished ones are kept for <span id="keep-days">7</span> days.</p>
+      <p class="jobs-hint">Analyses and uploads you started in the Genome Browser: only yours, and nobody else sees
+        them here. The genome worker runs one job at a time for everyone, in the order they were asked for, so a
+        waiting job says how many are ahead of it (other people's too, as a number only). Finished ones are kept for
+        <span id="keep-days">7</span> days.</p>
     </div>
     <p id="jobs-error" class="jobs-error" role="alert" hidden></p>
     <ul id="jobs-list" class="jobs-list" aria-live="polite"></ul>

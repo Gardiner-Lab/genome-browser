@@ -68,6 +68,9 @@ def test_my_jobs_with_progress_and_where_to_open_them(world):
     bob = world['call']('GET', '/api/jobs', 'bob').get_json()
     assert [j['kind'] for j in bob['jobs']] == ['profile'] and bob['jobs'][0]['ahead'] == 1
     assert world['call']('GET', '/api/jobs', '').status_code == 401
+    # Nor can one open another's result by its id.
+    assert world['call']('GET', f'/api/analyses/{done}', 'bob').status_code == 404
+    assert world['call']('GET', f'/api/analyses/{done}/files/profile.svg', 'bob').status_code == 404
 
 
 def test_marking_sequences_runs_against_its_estimate(world):

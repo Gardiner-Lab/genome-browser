@@ -939,7 +939,9 @@ def _browser_html(static_prefix: str) -> str:
           <input type="checkbox" name="missing_as_zero" checked> Count stretches without data as zero</label>
       </div>
       <p data-for="profile" class="gb-hint">Either choice changes the mean: say which you used when you report a profile.
-        Both are in the recipe that comes with the figure.</p>
+        Both are in the recipe that comes with the figure. For a methylation level, untick
+        <b>Count stretches without data as zero</b>, and check the track's values have no minus sign for the strand:
+        <a href="{prefix}/help#methylation" target="_blank" rel="noopener">setting up methylation tracks</a>.</p>
       <div data-for="compare">
         <div class="gb-circos-row">
           <label class="gb-field">Track A <select id="analyse-a"></select></label>

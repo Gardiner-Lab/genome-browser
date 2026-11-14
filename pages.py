@@ -329,6 +329,52 @@ def help_html(static_prefix: str, prefix: str) -> str:
          into a paper (see About).</p>
     </section>
 
+    <section id="methylation">
+      <h2>Methylation tracks: setting them up</h2>
+      <p>Bisulfite (or nanopore) methylation calls are not like read coverage: there is one value per cytosine, the
+         fraction of reads that were methylated there, and nothing in between. Three things need care before the
+         figures mean what you think.</p>
+      <h3>1. Values with a sign for the strand</h3>
+      <p>Many published files, GEO ones especially, keep both strands in one track and mark minus-strand cytosines with
+         a <b>minus sign</b>: 0.8 is a methylated C on the plus strand, &minus;0.8 one on the minus strand. Every
+         analysis averages, and averaging these cancels the strands against each other, so a profile comes out near
+         zero with dips below it. Check a file before using it: zoom in to a few hundred bases and see whether bars
+         hang below the line. If they do, fix it <b>before you upload</b>, in one of two ways:</p>
+      <ul>
+        <li><b>Both strands together</b> (what you usually want, and right for CG, which is methylated on both
+            strands alike): make every value positive.
+            <pre><code>bigWigToBedGraph GSM_CG.bw GSM_CG.bedGraph        # skip if you have a bedGraph or wig already
+awk 'BEGIN{{OFS="\\t"}} $4 &lt; 0 {{$4 = -$4}} {{print}}' GSM_CG.bedGraph &gt; GSM_CG.level.bedGraph</code></pre></li>
+        <li><b>Each strand its own track</b> (for CHG and CHH, or strand-specific questions): split on the sign, and
+            make the minus one positive.
+            <pre><code>awk 'BEGIN{{OFS="\\t"}} $4 &gt; 0' GSM_CG.bedGraph &gt; GSM_CG.plus.bedGraph
+awk 'BEGIN{{OFS="\\t"}} $4 &lt; 0 {{$4 = -$4; print}}' GSM_CG.bedGraph &gt; GSM_CG.minus.bedGraph</code></pre>
+            A cytosine with no methylation at all is 0 on either strand, so it has no sign and cannot be put on a
+            strand this way: the split tracks only hold methylated cytosines, and their means read high. Use the
+            split only to compare the strands with each other, or get files that give the strand in a column of its
+            own (Bismark's <code>CX_report</code>, MethylDackel), and make one bedGraph per strand from those.</li>
+      </ul>
+      <p>The browser takes the <code>.bedGraph</code> as it is and turns it into a coverage track. Name it so the
+         lab can tell (<i>WT rep 2, CG, both strands</i>), and give the GEO sample in its details.</p>
+      <h3>2. One context per track</h3>
+      <p>Keep CG, CHG and CHH in separate tracks: their levels differ tenfold, and mixed they say nothing. Leave
+         out cytosines read too few times (under 3 to 5 reads is usual) when you make the file, if the calls give the
+         read count; one read is 0 or 1 and nothing between.</p>
+      <h3>3. Level, or methylated cytosines per base</h3>
+      <p>Between cytosines a methylation track has no data. Whether that counts as zero decides what a mean is:</p>
+      <ul>
+        <li><b>Counted as zero</b>: the mean is methylation per base pair, high where there are many methylated
+            cytosines. It mixes how methylated they are with how many there are.</li>
+        <li><b>Left out</b>: the mean is the <b>methylation level</b> of the cytosines there, 0 to 1, the figure most
+            papers show.</li>
+      </ul>
+      <p>For a level, in <b>Profile around features</b> untick <b>Count stretches without data as zero</b>, and use
+         bins of 50 bp or more so each holds a few cytosines; stretches with none show black in the heatmap, as they
+         should. <b>Signal per feature</b>, <b>Replicate check</b>, <b>Tracks over the selection</b> and the
+         <b>Circos plot</b> always count them as zero, so on a methylation track they give methylated cytosines per
+         base, not a level: fine for comparing like with like (two genotypes in the same context), but say so.</p>
+    </section>
+
     <section id="genome">
       <h2>Adding a genome</h2>
       <ol class="steps">

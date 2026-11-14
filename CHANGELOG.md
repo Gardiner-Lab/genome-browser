@@ -28,6 +28,14 @@ and the project uses [semantic versioning](https://semver.org/).
   with no genome under them, counted as zero (or left out) like stretches without reads. The figure
   names them, and they download as a CSV with how far each runs past the end, to judge whether it
   matters (13 of 30,831 Arabidopsis genes with 2 kb either side).
+- **Help: setting up methylation tracks** (`/genome/help#methylation`, linked from the profile form).
+  Files that mark minus-strand cytosines with a minus sign (common on GEO) cancel out when averaged;
+  the help gives the commands to make them positive, or split them by strand, before upload, and says
+  why a split on the sign leaves out unmethylated cytosines. It covers one context per track, a
+  minimum read count, and when a mean is a methylation level (profile, *count stretches without data
+  as zero* unticked) or methylated cytosines per base (the table, replicate check, bar chart, circos).
+- My jobs says on the page that it lists only your own jobs; a waiting job's count of jobs ahead
+  includes other people's, as a number only. Opening another member's result by its id is refused.
 
 ### Fixed
 - **Replicate check and circos rings read nothing in 0.12.4.** Measuring many bins at once came from
