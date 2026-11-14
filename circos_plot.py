@@ -39,6 +39,7 @@ from html import escape
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import bigwig_means
 import chrom_names
 import feature_index
 import regions
@@ -183,12 +184,11 @@ def bigwig_bins(path: str, spans: List[Span], size: int) -> List[Tuple[str, int,
             if name not in theirs:
                 continue
             e = min(e, theirs[name])
-            whole = (e - s) // size
-            values = list(bw.stats(name, s, s + whole * size, nBins=whole, type='mean') or []) if whole else []
-            if s + whole * size < e:
-                values += bw.stats(name, s + whole * size, e, type='mean') or [None]
+            # Bases without reads count as zero (bigwig_means.py): pyBigWig's own mean skips them,
+            # which drew a bin with reads over a tenth of it as high as one covered throughout.
+            values = bigwig_means.bin_means(bw, name, s, e, size)
             for (bs, be), value in zip(_bins((chrom, s, e), size), values):
-                if value is not None and not math.isnan(value):
+                if not math.isnan(value):
                     out.append((chrom, bs, be, float(value)))
         return out
     finally:

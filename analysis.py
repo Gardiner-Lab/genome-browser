@@ -252,13 +252,24 @@ def run_compare(params: dict, a: dict, b: dict, work: Path) -> dict:
     return {'files': ['compare.bw'], 'operation': OPERATIONS[op]}
 
 
+def _measure(args: List[str], what: str) -> None:
+    """Run bigwig_means.py's step in this process, and record it for the recipe as the command it is."""
+    import bigwig_means
+    _RECIPE.append(['python3', 'bigwig_means.py', *args])
+    try:
+        bigwig_means.main(args)   # paths under work are written as bare names in the recipe (write_recipe)
+    except SystemExit as exc:
+        raise AnalysisError(f'{what} failed' + (f': {exc.code}' if isinstance(exc.code, str) else '.'))
+
+
 def run_correlation(params: dict, tracks: List[dict], work: Path) -> dict:
     binsize = int(_clamp(params.get('bin'), 1000, 1_000_000, 10000))
     method = params.get('method') if params.get('method') in ('pearson', 'spearman') else 'pearson'
     labels = [_label(t['name']) for t in tracks]
-    _run(['multiBigwigSummary', 'bins', '-b', *[t['file_path'] for t in tracks], '--labels', *labels,
-          '-bs', str(binsize), '-p', str(THREADS), '-o', 'summary.npz', '--outRawCounts', 'bins.tab'],
-         work, 'Summarising the tracks')
+    # Not multiBigwigSummary: it averages over covered bases only and leaves a bin with no reads NaN,
+    # which plotCorrelation drops, so bins where only one replicate has reads left the correlation.
+    _measure(['bins', *[t['file_path'] for t in tracks], '--labels', *labels, '-bs', str(binsize),
+              '-o', str(work / 'summary.npz'), '--outRawCounts', str(work / 'bins.tab')], 'Summarising the tracks')
     _run(['plotCorrelation', '-in', 'summary.npz', '-c', method, '-p', 'heatmap', '--plotNumbers',
           '--skipZeros', '--removeOutliers', '--colorMap', 'RdYlBu_r', '-o', 'correlation.svg',
           '--plotTitle', f'{method.capitalize()} correlation, {binsize:,} bp bins',
@@ -278,9 +289,10 @@ def run_genes(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], 
     if not n:
         raise AnalysisError('None of the chosen features were found.')
     labels = [_label(t['name']) for t in tracks]
-    _run(['multiBigwigSummary', 'BED-file', '-b', *[t['file_path'] for t in tracks], '--BED', str(bed),
-          '--labels', *labels, '-p', str(THREADS), '-o', 'genes.npz', '--outRawCounts', 'raw.tab'],
-         work, 'Measuring each feature')
+    # Not multiBigwigSummary: it averages over covered bases only (a gene with 10 over half its
+    # length read 10, not 5) and gives a feature with no reads no value at all.
+    _measure(['features', str(bed), *[t['file_path'] for t in tracks], '--labels', *labels,
+              '-o', str(work / 'raw.tab')], 'Measuring each feature')
     # deepTools keeps coordinates only: the names come back from the BED, by position.
     named: Dict[Tuple[str, int, int], Tuple[str, str]] = {}
     with open(bed, encoding='utf-8') as fh:
@@ -439,6 +451,7 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
 
     version = _deeptools_version()
     inputs = sorted(set(names[p] for p in names if p in {a for c in commands for a in c}))
+    uses_means = any(c[:2] == ['python3', 'bigwig_means.py'] for c in commands)
     run = ['#!/bin/sh', '# Makes the figure again: run in a folder holding the files below.', 'set -e', '']
     run += [shell(c) + '\n' for c in commands]
     if job['kind'] == 'genes':
@@ -452,7 +465,11 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
         readme += ['', 'The features used, as BED files (included here):', ''] + [f'- `{r}`' for r in regions]
     readme += ['', '## Software', '',
                f'- deepTools {version} (`pip install deeptools=={version}`, or `conda install -c bioconda deeptools={version}`)',
-               '- Python 3 with matplotlib (comes with deepTools)', '',
+               '- Python 3 with matplotlib (comes with deepTools)']
+    if uses_means:
+        readme += ['- `bigwig_means.py` (included): each track’s mean over a feature or bin, with the bases a track '
+                   'has no data for counted as zero. It needs pyBigWig and numpy, which come with deepTools.']
+    readme += ['',
                '## Run', '', 'In a folder with the inputs and these files:', '', '```sh', 'sh run.sh', '```', '',
                'The commands, as they were run:', '', '```sh'] + [shell(c) for c in commands] + ['```', '',
                'Cite deepTools: Ramirez F et al. (2016) deepTools2: a next generation web server for deep-sequencing '
@@ -464,6 +481,8 @@ def write_recipe(work: Path, job, params: dict, rows: Dict[str, dict], commands:
             z.write(work / r, r)
         if job['kind'] == 'genes':
             z.writestr('name_features.py', NAME_FEATURES)
+        if uses_means:
+            z.write(Path(__file__).with_name('bigwig_means.py'), 'bigwig_means.py')
     (work / 'recipe.json').write_text(json.dumps({'commands': [shell(c) for c in commands], 'inputs': inputs,
                                                   'regions': regions, 'deeptools': version}))
 
@@ -651,6 +670,7 @@ def register_analysis(app) -> None:
     def region_means(genome_id):
         """Each coverage track's mean (and maximum) over one region: for a bar chart of the selection."""
         import pyBigWig
+        import bigwig_means
         import chrom_names
         member = identity.require_member()
         body = request.get_json(silent=True) or {}
@@ -684,9 +704,12 @@ def register_analysis(app) -> None:
                 if name not in theirs:
                     mean = peak = None
                 else:
+                    # Bases without reads count as zero (bigwig_means.py): pyBigWig's own mean skips them.
                     e = min(end, theirs[name])
-                    mean = (bw.stats(name, start, e, type='mean') or [None])[0]
+                    mean = bigwig_means.mean(bw, name, start, e)
                     peak = (bw.stats(name, start, e, type='max') or [None])[0]
+                    if peak is None:
+                        peak = 0.0
             finally:
                 bw.close()
             out.append({'id': tid, 'name': row['name'], 'mean': mean, 'max': peak})
