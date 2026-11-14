@@ -2226,7 +2226,7 @@
         }
         if ((r.heatmap_filled || []).length) {
             parts.push('In the heatmap, a step of a methylation track with no cytosine measured takes its value from the ' +
-                'measured steps beside it in the same row, so each feature reads as a whole; the profile and the ' +
+                'measured steps beside it in the same row, so each feature reads as a whole; the profiles, the ones over the heatmap too, and the ' +
                 'matrix download are as measured.');
         }
         if (r.off_end && r.off_end.count) {

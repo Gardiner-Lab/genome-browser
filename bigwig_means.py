@@ -25,6 +25,7 @@ This file is also the script the recipes carry (it needs only pyBigWig, and nump
     python3 bigwig_means.py fill matrix.gz --samples 1 -o matrix.gz   # computeMatrix's NaN as 0, for sample 1
     python3 bigwig_means.py interpolate matrix.gz --samples 2 -o heatmap-matrix.gz   # for the heatmap only
     python3 bigwig_means.py heatmap -m matrix.gz -o heatmap.png ...   # plotHeatmap, column names at 45 degrees
+    python3 bigwig_means.py heatmap -m heatmap-matrix.gz --profileMatrix matrix.gz ...   # profiles as measured
 
 Both write the tab-separated table ``multiBigwigSummary --outRawCounts`` does (0-based starts),
 and ``bins`` the .npz it does, which ``plotCorrelation`` and ``plotPCA`` read.
@@ -257,7 +258,18 @@ def heatmap(args: List[str]) -> None:
     degrees, starting over the middle of its column, and the plot title moved above them. plotHeatmap
     writes them level and centred, so two long track names run into each other, and it has no option
     to turn them.
+
+    ``--profileMatrix FILE`` (not plotHeatmap's own): the profiles drawn over the heatmap's columns
+    are averaged from that matrix instead of the one the heatmap shows. With ``-m heatmap-matrix.gz``
+    (``interpolate``) and ``--profileMatrix matrix.gz`` the heatmap has its gaps filled while the
+    profiles are as measured. Each feature's row is found in it by its place, name and strand, so the
+    profiles follow the heatmap's sorting and clusters.
     """
+    profile_matrix = None
+    if '--profileMatrix' in args:
+        at = args.index('--profileMatrix')
+        profile_matrix = args[at + 1]
+        args = args[:at] + args[at + 2:]
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.axes
@@ -286,13 +298,42 @@ def heatmap(args: List[str]) -> None:
                 top.set_va('bottom')
         return savefig(*a, **kw)
 
+    add_profile = plotHeatmap.addProfilePlot
+
+    def measured_profile(hm, *a, **kw):
+        import numpy as np
+        from deeptools import heatmapper
+        source = heatmapper.heatmapper()
+        source.read_matrix_file(profile_matrix)
+        rows: dict = {}
+        for region, row in zip(source.matrix.regions, source.matrix.matrix):
+            rows.setdefault(_region_key(region), []).append(row)
+        shown = hm.matrix.matrix
+        try:
+            hm.matrix.matrix = np.ma.vstack([rows[_region_key(r)].pop(0) for r in hm.matrix.regions])
+        except (KeyError, IndexError):
+            raise SystemExit(f'{profile_matrix} does not hold the same features as the heatmap')
+        try:
+            return add_profile(hm, *a, **kw)
+        finally:
+            hm.matrix.matrix = shown
+
     matplotlib.axes.Axes.set_title = tilted
     plt.savefig = save
+    if profile_matrix:
+        plotHeatmap.addProfilePlot = measured_profile
     try:
         plotHeatmap.main(args)
     finally:
         matplotlib.axes.Axes.set_title = set_title
         plt.savefig = savefig
+        plotHeatmap.addProfilePlot = add_profile
+
+
+def _region_key(region) -> tuple:
+    """A feature in a deepTools matrix: chromosome, its blocks, name and strand."""
+    chrom, blocks, name, _group, strand = region[:5]
+    return chrom, tuple(tuple(b) for b in blocks), name, strand
 
 
 def main(argv: Optional[List[str]] = None, progress: Progress = None) -> None:

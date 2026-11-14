@@ -363,8 +363,8 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         if any(levels):
             # A methylation track has steps with no cytosine in nearly every row, and plotHeatmap paints a
             # pixel holding any of them as missing: the whole heatmap came out grey. For the heatmap only,
-            # each empty step takes its value from the measured steps beside it in the same row; the profile
-            # is drawn from the matrix as measured, so the heatmap leaves out its own profile on top.
+            # each empty step takes its value from the measured steps beside it in the same row. The
+            # profiles over its columns are still drawn from the matrix as measured (--profileMatrix).
             heat_matrix = 'heatmap-matrix.gz'
             _measure(['interpolate', str(work / 'matrix.gz'), '--samples',
                       *[str(i + 1) for i, lv in enumerate(levels) if lv], '-o', str(work / heat_matrix)],
@@ -376,7 +376,7 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         if any(levels):
             # A row with no cytosine measured anywhere: light grey, not deepTools' black, which reads as
             # a value at the bottom of the scale.
-            heat_args += ['--missingDataColor', '0.85', '--whatToShow', 'heatmap and colorbar']
+            heat_args += ['--missingDataColor', '0.85', '--profileMatrix', 'matrix.gz']
         if not missing_as_zero and levels.count(False):
             # Coverage left with gaps (as chosen): each pixel one feature's value, not a blend that any
             # gap turns to the missing colour.

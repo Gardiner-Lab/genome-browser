@@ -9,6 +9,12 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A methylation heatmap has its profiles back.** 0.14.1 left out the profiles plotHeatmap draws over
+  each column, since it would have drawn them from the heatmap's filled-in matrix. They are back, drawn
+  from the matrix as measured (`bigwig_means.py heatmap --profileMatrix matrix.gz`), each feature's row
+  found by its place, name and strand, so they follow the heatmap's sorting and clusters.
+
 ## [0.14.1] - 2026-11-14
 
 ### Fixed

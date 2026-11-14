@@ -250,7 +250,8 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
     heat = next(a for a in runs if a[2:3] == ['heatmap'])
     assert heat[heat.index('--missingDataColor') + 1] == '0.85'
     # The heatmap is drawn from the matrix with each row's empty steps filled; the profile from the measured one.
-    assert heat[heat.index('-m') + 1] == 'heatmap-matrix.gz' and 'heatmap and colorbar' in heat
+    assert heat[heat.index('-m') + 1] == 'heatmap-matrix.gz'
+    assert heat[heat.index('--profileMatrix') + 1] == 'matrix.gz'   # its profiles as measured
     assert measured == [['interpolate', str(tmp_path / 'matrix.gz'), '--samples', '1', '-o',
                          str(tmp_path / 'heatmap-matrix.gz')]]
     assert out['heatmap_filled'] == ['CG']
@@ -283,3 +284,37 @@ def test_existing_tracks_are_checked_when_the_worker_starts(world):
         assert conn.execute('SELECT signal FROM tracks WHERE id = ?', (cg,)).fetchone()[0] == 'coverage'
     finally:
         conn.close()
+
+
+@pytest.mark.skipif(shutil.which('plotHeatmap') is None, reason='deepTools is not installed here (it is in the image)')
+def test_the_heatmaps_profiles_are_drawn_from_the_measured_matrix(tmp_path, monkeypatch):
+    # The heatmap shows the filled matrix; the profiles over it, the measured one, row for row, even
+    # once plotHeatmap has sorted and clustered the rows.
+    header = {'upstream': [100], 'downstream': [100], 'body': [200], 'bin size': [100], 'ref point': [None],
+              'verbose': False, 'bin avg type': 'mean', 'missing data as zero': False, 'min threshold': None,
+              'max threshold': None, 'scale': 1, 'skip zeros': True, 'nan after end': False, 'proc number': 1,
+              'sort regions': 'keep', 'sort using': 'mean', 'unscaled 5 prime': [0], 'unscaled 3 prime': [0],
+              'group_labels': ['genes'], 'group_boundaries': [0, 6], 'sample_labels': ['CG'],
+              'sample_boundaries': [0, 4]}
+    measured = {f'G{i}': [i / 10, 'nan', i / 10, 'nan'] for i in range(6)}
+
+    def write(path, fill):
+        with gzip.open(path, 'wt') as fh:
+            fh.write('@' + json.dumps(header) + '\n')
+            for i, (name, row) in enumerate(measured.items()):
+                values = [fill if v == 'nan' else v for v in row] if fill is not None else row
+                fh.write(f'Chr1\t{i * 1000}\t{i * 1000 + 200}\t{name}\t.\t+\t' + '\t'.join(map(str, values)) + '\n')
+    write(tmp_path / 'matrix.gz', None)
+    write(tmp_path / 'heatmap-matrix.gz', 9)       # filled with something no profile should show
+    from deeptools import plotHeatmap
+    drawn = []
+    real = plotHeatmap.plot_single
+    monkeypatch.setattr(plotHeatmap, 'plot_single',
+                        lambda ax, ma, *a, **k: (drawn.append(np.ma.mean(ma, axis=0)), real(ax, ma, *a, **k))[1])
+    monkeypatch.setenv('MPLCONFIGDIR', str(tmp_path / '.mpl'))
+    bigwig_means.main(['heatmap', '-m', str(tmp_path / 'heatmap-matrix.gz'), '--profileMatrix', str(tmp_path / 'matrix.gz'),
+                       '-o', str(tmp_path / 'heat.png'), '--kmeans', '2', '--sortRegions', 'descend'])
+    assert (tmp_path / 'heat.png').exists() and len(drawn) == 2         # one profile per cluster
+    for profile in drawn:
+        assert np.ma.is_masked(profile[1]) and np.ma.is_masked(profile[3])   # the unmeasured steps: no value
+        assert profile[0] == profile[2] < 1                                 # the measured ones, not 9
