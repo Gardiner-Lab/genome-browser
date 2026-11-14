@@ -1,0 +1,58 @@
+/* My jobs (jobs.py): the member's analyses and uploads, with progress bars. Over trellis.css. */
+
+body.tt { background: var(--tt-bg); }
+body.embedded { background: transparent; }
+
+.jobs { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+body.embedded .jobs { padding-top: .75rem; }
+.jobs-head h1 { margin: 0 0 .25rem; font-size: 1.35rem; }
+body.embedded .jobs-head h1 { display: none; }
+.jobs-hint { margin: 0 0 1rem; color: var(--tt-muted); font-size: .9rem; }
+.jobs-error { padding: .6rem .8rem; border-radius: var(--tt-radius); background: var(--tt-danger-soft); color: var(--tt-danger); }
+.jobs-empty { color: var(--tt-muted); }
+
+.jobs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.job { background: var(--tt-card); border: 1px solid var(--tt-border); border-radius: var(--tt-radius-lg);
+       box-shadow: var(--tt-shadow); padding: .8rem 1rem; display: grid; gap: .45rem; }
+.job-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; }
+.job-what { font-weight: 600; }
+.job-state { font-size: .8rem; padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--tt-border);
+             color: var(--tt-muted); background: var(--tt-sunk); }
+.job[data-state="running"] .job-state { color: var(--tt-green-ink); background: var(--tt-green-soft); border-color: var(--tt-green-line); }
+.job[data-state="done"] .job-state { color: var(--tt-ok); background: var(--tt-ok-soft); border-color: var(--tt-green-line); }
+.job[data-state="failed"] .job-state { color: var(--tt-danger); background: var(--tt-danger-soft); border-color: #f3c4bf; }
+.job-when { margin-left: auto; color: var(--tt-muted); font-size: .85rem; white-space: nowrap; }
+.job-about { color: var(--tt-text); font-size: .92rem; overflow-wrap: anywhere; }
+.job-genome { color: var(--tt-muted); }
+
+.job-bar { position: relative; height: .6rem; border-radius: 999px; background: var(--tt-sunk);
+           border: 1px solid var(--tt-line); overflow: hidden; }
+.job-bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--tt-green);
+                  border-radius: 999px; transition: width .6s ease; }
+/* Working on a step: a soft stripe moves along the bar so it never looks stuck. */
+.job[data-state="running"] .job-bar > span {
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .35) 50%, rgba(255, 255, 255, 0) 100%);
+  background-size: 8rem 100%; background-repeat: no-repeat; animation: job-sheen 1.6s linear infinite;
+}
+/* No measure of how far (an upload being prepared): a band runs to and fro instead. */
+.job-bar.unknown > span { width: 30%; animation: job-sweep 1.4s ease-in-out infinite alternate; }
+.job[data-state="failed"] .job-bar > span { background: var(--tt-danger); }
+@keyframes job-sheen { from { background-position: -8rem 0; } to { background-position: calc(100% + 8rem) 0; } }
+@keyframes job-sweep { from { left: 0; } to { left: 70%; } }
+@media (prefers-reduced-motion: reduce) {
+  .job-bar > span, .job-bar.unknown > span { animation: none; transition: none; }
+  .job-bar.unknown > span { left: 35%; }
+}
+
+.job-detail { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; font-size: .85rem; color: var(--tt-muted); }
+.job-error { color: var(--tt-danger); font-size: .88rem; }
+.job-actions { margin-left: auto; display: flex; gap: .5rem; }
+.job-open { display: inline-block; padding: .3rem .8rem; border-radius: var(--tt-radius); background: var(--tt-green);
+            color: #fff; text-decoration: none; font-weight: 600; font-size: .85rem; }
+.job-open:hover { background: var(--tt-green-dark); }
+.job-open:focus-visible { outline: none; box-shadow: var(--tt-focus); }
+
+@media (max-width: 34rem) {
+  .job-when { margin-left: 0; width: 100%; }
+  .job-actions { margin-left: 0; }
+}

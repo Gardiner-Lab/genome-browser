@@ -474,6 +474,7 @@ def _browser_html(static_prefix: str) -> str:
     <a class="tt-module" href="{prefix}/"><img src="{static}/trellis/genome.svg" alt="">Genome Browser</a>
     <span class="tt-sub" id="crumb" hidden></span>
     <nav class="tt-links">
+      <a href="{prefix}/jobs">My jobs</a>
       <a href="{prefix}/help">Help</a>
       <a href="{prefix}/about">About</a>
     </nav>

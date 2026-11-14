@@ -135,7 +135,7 @@ def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
     # Without it, bins a coverage track has no entries for are NaN: black in the heatmap.
     runs = []
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
-    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
+    monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(args))
     monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
     monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
     analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
@@ -150,7 +150,7 @@ def test_profile_choices_reach_compute_matrix(monkeypatch, tmp_path):
     def run_with(**choices):
         runs = []
         monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
-        monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
+        monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(args))
         monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
         monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
         out = analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], **choices},
@@ -201,7 +201,7 @@ def test_profile_label_counts_the_features_drawn(monkeypatch, tmp_path):
     runs = []
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 40)
 
-    def fake_run(args, cwd, what):
+    def fake_run(args, cwd, what, **step):
         runs.append(args)
         if args[0] == 'computeMatrix':
             with gzip.open(tmp_path / 'matrix.gz', 'wt') as fh:

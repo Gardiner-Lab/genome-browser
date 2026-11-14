@@ -34,7 +34,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import feature_index
 import regions
@@ -74,9 +74,41 @@ class AnalysisError(Exception):
 # The commands the job running now has run, in order (the worker runs one job at a time).
 _RECIPE: List[List[str]] = []
 
+# Where the job running now has got to: run_job points this at a function that records a step and a
+# fraction done, which the dashboard's My jobs shows as a progress bar.
+_PROGRESS: List[Optional[Callable[[str, float], None]]] = [None]
+
+
+def _progress(step: str, fraction: float) -> None:
+    if _PROGRESS[0] is not None:
+        _PROGRESS[0](step, max(0.0, min(1.0, fraction)))
+
+
+def _progress_recorder(conn, job_id: str) -> Callable[[str, float], None]:
+    """Records progress in the job's row, at most about once a second unless the step changes."""
+    last = {'step': None, 'at': 0.0}
+
+    def record(step: str, fraction: float) -> None:
+        now = time.time()
+        if step == last['step'] and now - last['at'] < 1.0:
+            return
+        last.update(step=step, at=now)
+        try:
+            conn.execute('UPDATE analysis_jobs SET step = ?, progress = ? WHERE id = ?',
+                         (step, round(fraction, 4), job_id))
+            conn.commit()
+        except sqlite3.Error:
+            pass        # a progress bar is never worth failing the job over
+    return record
+
 
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
+    # Added in 0.13.0: where a running job has got to, for the progress bars on the suite's dashboard.
+    have = {r[1] for r in conn.execute('PRAGMA table_info(analysis_jobs)')}
+    for column, kind in (('step', 'TEXT'), ('progress', 'REAL')):
+        if column not in have:
+            conn.execute(f'ALTER TABLE analysis_jobs ADD COLUMN {column} {kind}')
 
 
 def job_dir(data_root: Path, job_id: str) -> Path:
@@ -100,8 +132,8 @@ def claim_next(conn) -> Optional[sqlite3.Row]:
     try:
         row = conn.execute("SELECT * FROM analysis_jobs WHERE state = 'queued' ORDER BY created_at LIMIT 1").fetchone()
         if row is not None:
-            conn.execute("UPDATE analysis_jobs SET state = 'running', started_at = datetime('now') WHERE id = ?",
-                         (row['id'],))
+            conn.execute("UPDATE analysis_jobs SET state = 'running', started_at = datetime('now'), "
+                         "step = NULL, progress = 0 WHERE id = ?", (row['id'],))
         conn.execute('COMMIT')
     except Exception:
         conn.execute('ROLLBACK')
@@ -112,7 +144,8 @@ def claim_next(conn) -> Optional[sqlite3.Row]:
 def recover(conn) -> int:
     """A job left running by a restart is run again."""
     ensure_schema(conn)
-    n = conn.execute("UPDATE analysis_jobs SET state = 'queued', started_at = NULL WHERE state = 'running'").rowcount
+    n = conn.execute("UPDATE analysis_jobs SET state = 'queued', started_at = NULL, step = NULL, progress = NULL "
+                     "WHERE state = 'running'").rowcount
     conn.commit()
     return n
 
@@ -175,15 +208,36 @@ def _label(name: str) -> str:
     return re.sub(r'\s+', ' ', name).strip()[:60] or 'track'
 
 
-def _run(args: List[str], cwd: Path, what: str) -> None:
+def _run(args: List[str], cwd: Path, what: str, at: Optional[float] = None,
+         until: Optional[float] = None, expect: float = 0.0) -> None:
+    """
+    Run one command of the analysis.
+
+    For the progress bar: ``at`` is how far through the job it starts. deepTools says nothing of how
+    far it has got, so for a long step, ``expect`` (its likely seconds) moves the bar from ``at``
+    towards ``until`` as time passes, never past 95% of the way: it only reaches ``until`` when the
+    step is really done and the next one begins.
+    """
+    if at is not None:
+        _progress(what, at)
     _RECIPE.append(list(args))
     env = dict(os.environ, MPLBACKEND='Agg', MPLCONFIGDIR=str(cwd / '.mpl'))
-    try:
-        done = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS, env=env)
-    except subprocess.TimeoutExpired:
-        raise AnalysisError(f'{what} took too long: try fewer tracks or features.')
-    if done.returncode != 0:
-        detail = (done.stderr or done.stdout or '').strip().splitlines()[-2:]
+    started = time.time()
+    proc = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    while True:
+        try:
+            out, err = proc.communicate(timeout=1.0)
+            break
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - started
+            if elapsed > TIMEOUT_SECONDS:
+                proc.kill()
+                proc.communicate()
+                raise AnalysisError(f'{what} took too long: try fewer tracks or features.')
+            if at is not None and until is not None and expect > 0:
+                _progress(what, at + (until - at) * min(0.95, elapsed / expect))
+    if proc.returncode != 0:
+        detail = (err or out or '').strip().splitlines()[-2:]
         raise AnalysisError(f'{what} failed' + (': ' + ' '.join(detail) if detail else '.'))
 
 
@@ -223,7 +277,11 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         args += ['-m', str(body)]
     else:
         args += ['--referencePoint', 'TSS' if mode == 'start' else 'TES']
-    _run(args, work, 'Computing the profile')
+    # How long computeMatrix is likely to take, for the progress bar only: about 0.05 ms for each
+    # feature, track and step (30,000 genes, one track, 70 steps took 95-118 s in the worker).
+    steps = (before + after + (body if mode == 'scale' else 0)) / binsize
+    expect = sum(found) * len(tracks) * max(steps, 1) * 5e-5
+    _run(args, work, 'Computing the profile', at=0.0, until=0.85 if params.get('heatmap') else 0.9, expect=expect)
     # Label each set with the features actually drawn: computeMatrix leaves out those with no signal
     # at all (--skipZeros) and those shorter than a bin, so the count found would overstate it.
     drawn = _features_drawn(work / 'matrix.gz')
@@ -242,7 +300,7 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
               '--refPointLabel', 'start' if mode == 'start' else 'end']
     profile_args = ['plotProfile', '-m', 'matrix.gz', '-o', 'profile.svg', '--perGroup', *common,
                     '--plotTitle', title or 'Mean signal', '--yAxisLabel', 'mean signal']
-    _run(profile_args, work, 'Drawing the profile')
+    _run(profile_args, work, 'Drawing the profile', at=0.85 if params.get('heatmap') else 0.9)
     files = ['profile.svg', 'matrix.gz']
     if params.get('heatmap'):
         k = int(_clamp(params.get('kmeans'), 0, 8, 0))
@@ -253,7 +311,7 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
                      '--colorMap', colormap, '--heatmapHeight', '18', '--plotTitle', title or 'Signal per feature']
         if k >= 2:
             heat_args += ['--kmeans', str(k)]
-        _run(heat_args, work, 'Drawing the heatmap')
+        _run(heat_args, work, 'Drawing the heatmap', at=0.9)
         files.insert(1, 'heatmap.png')
     out = {'files': files, 'regions': labels, 'skip_zeros': skip_zeros, 'missing_as_zero': missing_as_zero}
     if left_out:
@@ -322,16 +380,20 @@ def run_compare(params: dict, a: dict, b: dict, work: Path) -> dict:
             '-bs', str(binsize), '-p', str(THREADS), '-o', 'compare.bw']
     if op in ('log2', 'ratio'):
         args += ['--pseudocount', str(_clamp(params.get('pseudocount'), 0.0001, 1000, 1))]
-    _run(args, work, 'Comparing the tracks')
+    _run(args, work, 'Comparing the tracks', at=0.0)
     return {'files': ['compare.bw'], 'operation': OPERATIONS[op]}
 
 
-def _measure(args: List[str], what: str) -> None:
-    """Run bigwig_means.py's step in this process, and record it for the recipe as the command it is."""
+def _measure(args: List[str], what: str, span: Tuple[float, float] = (0.0, 1.0)) -> None:
+    """Run bigwig_means.py's step in this process, and record it for the recipe as the command it is.
+
+    ``span`` is the part of the job it takes, for the progress bar, which it moves as it goes."""
     import bigwig_means
     _RECIPE.append(['python3', 'bigwig_means.py', *args])
+    _progress(what, span[0])
     try:
-        bigwig_means.main(args)   # paths under work are written as bare names in the recipe (write_recipe)
+        # Paths under work are written as bare names in the recipe (write_recipe).
+        bigwig_means.main(args, progress=lambda f: _progress(what, span[0] + (span[1] - span[0]) * f))
     except SystemExit as exc:
         raise AnalysisError(f'{what} failed' + (f': {exc.code}' if isinstance(exc.code, str) else '.'))
 
@@ -343,13 +405,14 @@ def run_correlation(params: dict, tracks: List[dict], work: Path) -> dict:
     # Not multiBigwigSummary: it averages over covered bases only and leaves a bin with no reads NaN,
     # which plotCorrelation drops, so bins where only one replicate has reads left the correlation.
     _measure(['bins', *[t['file_path'] for t in tracks], '--labels', *labels, '-bs', str(binsize),
-              '-o', str(work / 'summary.npz'), '--outRawCounts', str(work / 'bins.tab')], 'Summarising the tracks')
+              '-o', str(work / 'summary.npz'), '--outRawCounts', str(work / 'bins.tab')], 'Summarising the tracks',
+             span=(0.0, 0.7))
     _run(['plotCorrelation', '-in', 'summary.npz', '-c', method, '-p', 'heatmap', '--plotNumbers',
           '--skipZeros', '--removeOutliers', '--colorMap', 'RdYlBu_r', '-o', 'correlation.svg',
           '--plotTitle', f'{method.capitalize()} correlation, {binsize:,} bp bins',
-          '--outFileCorMatrix', 'correlation.tab'], work, 'Drawing the correlation')
+          '--outFileCorMatrix', 'correlation.tab'], work, 'Drawing the correlation', at=0.7)
     _run(['plotPCA', '-in', 'summary.npz', '-o', 'pca.svg', '--plotTitle', 'Principal components'],
-         work, 'Drawing the PCA')
+         work, 'Drawing the PCA', at=0.85)
     return {'files': ['correlation.svg', 'pca.svg', 'correlation.tab', 'bins.tab']}
 
 
@@ -366,7 +429,8 @@ def run_genes(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], 
     # Not multiBigwigSummary: it averages over covered bases only (a gene with 10 over half its
     # length read 10, not 5) and gives a feature with no reads no value at all.
     _measure(['features', str(bed), *[t['file_path'] for t in tracks], '--labels', *labels,
-              '-o', str(work / 'raw.tab')], 'Measuring each feature')
+              '-o', str(work / 'raw.tab')], 'Measuring each feature', span=(0.0, 0.95))
+    _progress('Writing the table', 0.95)
     # deepTools keeps coordinates only: the names come back from the BED, by position.
     named: Dict[Tuple[str, int, int], Tuple[str, str]] = {}
     with open(bed, encoding='utf-8') as fh:
@@ -427,6 +491,7 @@ def run_job(conn, data_root: Path, job) -> None:
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     started = time.time()
+    _PROGRESS[0] = _progress_recorder(conn, job['id'])
     try:
         ids = list(params.get('tracks') or []) + [r.get('track') for r in params.get('regions') or []]
         ids = [i for i in ids + [params.get('a'), params.get('b')] if i]
@@ -470,13 +535,15 @@ def run_job(conn, data_root: Path, job) -> None:
         if kind not in ('compare', 'motif'):
             write_recipe(work, job, params, rows, list(_RECIPE))
             result['files'].append('recipe.zip')
-        conn.execute("UPDATE analysis_jobs SET state = 'done', result = ?, finished_at = datetime('now') WHERE id = ?",
+        conn.execute("UPDATE analysis_jobs SET state = 'done', result = ?, step = NULL, progress = 1, "
+                     "finished_at = datetime('now') WHERE id = ?",
                      (json.dumps(result), job['id']))
     except Exception as exc:   # every failure is the member's to see, never the worker's end
         message = str(exc) if isinstance(exc, AnalysisError) else f'The analysis failed: {exc}'
         conn.execute("UPDATE analysis_jobs SET state = 'failed', error = ?, finished_at = datetime('now') WHERE id = ?",
                      (message[:1000], job['id']))
     finally:
+        _PROGRESS[0] = None
         shutil.rmtree(work / '.mpl', ignore_errors=True)
         conn.commit()
 
@@ -695,7 +762,8 @@ def register_analysis(app) -> None:
     @app.route('/api/analyses/<job_id>')
     def analysis_status(job_id):
         job, ahead = _own_job(job_id)
-        out = {'id': job['id'], 'kind': job['kind'], 'state': job['state'], 'error': job['error'],
+        out = {'id': job['id'], 'kind': job['kind'], 'genome_id': job['genome_id'], 'state': job['state'],
+               'error': job['error'], 'step': job['step'], 'progress': job['progress'],
                'created_at': job['created_at'], 'started_at': job['started_at'], 'finished_at': job['finished_at'],
                'ahead': ahead if job['state'] == 'queued' else 0}
         if job['result']:

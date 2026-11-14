@@ -91,3 +91,16 @@ def test_bins_keep_the_bins_where_only_one_track_has_reads(sparse, tmp_path):
     assert z['matrix'][0] == pytest.approx([2.0, 0.4])
     assert z['matrix'][5] == pytest.approx([5.0, 0.0])   # deepTools left this NaN, and plotCorrelation dropped it
     assert raw.read_text().splitlines()[6] == 'chr1\t50000\t60000\t5\t0'
+
+
+def test_progress_goes_up_to_done(sparse, tmp_path):
+    seen = []
+    bigwig_means.main(['bins', str(sparse), str(sparse), '--labels', 'A', 'B', '-bs', '10000',
+                       '-o', str(tmp_path / 's.npz')], progress=seen.append)
+    assert seen == sorted(seen) and seen[-1] == pytest.approx(1.0)
+    bed = tmp_path / 'many.bed'
+    bed.write_text(''.join(f'chr1\t{i * 10}\t{i * 10 + 5}\tF{i}\t0\t+\n' for i in range(1200)))
+    seen = []
+    bigwig_means.main(['features', str(bed), str(sparse), '--labels', 'A', '-o', str(tmp_path / 'raw.tab')],
+                      progress=seen.append)
+    assert seen == [pytest.approx(500 / 1200), pytest.approx(1000 / 1200)]

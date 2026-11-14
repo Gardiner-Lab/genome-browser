@@ -593,7 +593,7 @@
         el('saved').textContent = '';
 
         var genomeP = state.genomes.length ? Promise.resolve(state.genomes) : getJSON(API + '/genomes');
-        Promise.all([
+        return Promise.all([
             genomeP,
             getJSON(API + '/genomes/' + encodeURIComponent(genomeId) + '/tracks'),
             chosen ? Promise.resolve(chosen) : getJSON(API + '/view?genome_id=' + encodeURIComponent(genomeId))
@@ -2195,12 +2195,16 @@
     function profileAbout(r) {
         var count = function (n) { return Number(n).toLocaleString('en-US'); };
         var parts = ['Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.'];
+        // Results from before 0.12.5 did not record these choices, nor what was left out: say nothing of them.
+        if (r.skip_zeros === undefined) { return parts[0]; }
         var skip = r.skip_zeros !== false, zero = r.missing_as_zero !== false;
         if (r.left_out) {
-            parts.push('Left out: ' + Object.keys(r.left_out).map(function (k) { return count(r.left_out[k]) + ' ' + k; }).join(', ') +
+            parts.push('Left out: ' + Object.keys(r.left_out).map(function (k) { return count(r.left_out[k]) + ' of type ' + k; }).join(', ') +
                 (skip ? ', with no signal anywhere within the window, or shorter than one step.' : ', shorter than one step.'));
+        } else if (skip) {
+            parts.push('Features with no signal in the window would have been left out; none were.');
         }
-        parts.push(skip ? 'Features with no signal in the window were left out.' : 'Every feature counts, with or without signal.');
+        if (!skip) { parts.push('Every feature counts, with or without signal.'); }
         parts.push(zero ? 'Stretches without data count as zero.'
             : 'Stretches without data are left out of the mean, and black in the heatmap.');
         if (r.off_end && r.off_end.count) {
@@ -3233,7 +3237,46 @@
         var params = new URLSearchParams(location.search);
         var genome = params.get('genome');
         var track = params.get('track');
-        if (track && !genome) { openTrack(track); } else if (genome) { openBrowser(genome, null); } else { showChoose(null, true); }
+        var job = params.get('job');
+        if (job) { openJob(job); } else if (track && !genome) { openTrack(track); } else if (genome) { openBrowser(genome, null); } else { showChoose(null, true); }
+    }
+
+    // A link to a finished analysis (from My jobs on the dashboard): its genome opens as the member
+    // last had it, and the result is shown as the Analyse panel shows it when it finishes.
+    function openJob(jobId) {
+        getJSON(API + '/analyses/' + encodeURIComponent(jobId)).then(function (job) {
+            if (!job.genome_id) { throw new Error('no genome'); }
+            var r = job.result || {};
+            if (job.state === 'done' && (r.track_id || (job.kind === 'motif' && r.id))) {
+                openTrack(r.track_id || r.id);        // a comparison or marked sequences: the track it made
+                return;
+            }
+            history.replaceState({ genome: job.genome_id }, '', PREFIX + '/?genome=' + encodeURIComponent(job.genome_id));
+            return getJSON(API + '/view?genome_id=' + encodeURIComponent(job.genome_id)).catch(function () { return {}; })
+                .then(function (view) {
+                    view = view || {};
+                    return openBrowser(job.genome_id, { locus: view.locus || '', enabled: view.enabled || [], options: view.options || {} });
+                })
+                .then(function () {
+                    if (!state.genome || !ANALYSES[job.kind]) { return; }   // marking sequences: no panel of its own
+                    state.analyseKind = job.kind;
+                    openAnalyseDialog();
+                    if (job.state === 'done') {
+                        el('analyse-status').textContent = 'Finished ' + (job.finished_at ? job.finished_at.slice(0, 16) + ' UTC' : '') + '.';
+                        showAnalysisResult(job);
+                    } else if (job.state === 'failed') {
+                        formError(el('analyse-form'), [job.error || 'It failed.']);
+                    } else {
+                        watchAnalysis(job.id, Date.now());
+                    }
+                });
+        }).catch(function () {
+            history.replaceState({}, '', PREFIX + '/');
+            showChoose(null, true);
+            var note = el('choose-note');
+            note.textContent = 'That result is no longer kept (results are kept for a week), or it is not yours.';
+            note.hidden = false;
+        });
     }
 
     // A link to one track (from a notebook page): its genome opens as the

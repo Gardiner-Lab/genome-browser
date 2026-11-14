@@ -30,6 +30,7 @@ from analysis import register_analysis
 from circos_plot import register_circos
 from figures import register_figures
 from genomes import register_genomes
+from jobs import register_jobs
 from primer_check import register_primer_check
 from tracks import register_tracks
 from regions import register_regions
@@ -38,7 +39,7 @@ from sharing import register_sharing
 from tags import register_tags
 from views import register_views
 
-APP_VERSION = '0.12.4'
+APP_VERSION = '0.12.5'
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ def create_app(config: Config = None) -> Flask:
     register_figures(app)
     register_circos(app)
     register_analysis(app)
+    register_jobs(app)
     register_primer_check(app)
     register_regions(app)
     register_tags(app)

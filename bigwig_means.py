@@ -21,7 +21,9 @@ and ``bins`` the .npz it does, which ``plotCorrelation`` and ``plotPCA`` read.
 """
 import argparse
 import sys
-from typing import List, Optional
+from typing import Callable, List, Optional
+
+Progress = Optional[Callable[[float], None]]   # told the fraction done, as it goes
 
 # A big chromosome is read in pieces of this many bins, so memory stays small.
 _CHUNK_BINS = 10_000
@@ -66,9 +68,11 @@ def _fmt(v: float) -> str:
     return f'{v:.6g}'
 
 
-def features(bed: str, bigwigs: List[str], labels: List[str], out: str) -> int:
+def features(bed: str, bigwigs: List[str], labels: List[str], out: str, progress: Progress = None) -> int:
     """One row per line of the BED file: each track's mean over it. Returns the number of rows."""
     import pyBigWig
+    with open(bed, encoding='utf-8') as fh:
+        total = sum(1 for _ in fh) or 1
     handles = [pyBigWig.open(p) for p in bigwigs]
     n = 0
     try:
@@ -82,13 +86,16 @@ def features(bed: str, bigwigs: List[str], labels: List[str], out: str) -> int:
                 values = [mean(bw, chrom, s, e) for bw in handles]
                 w.write('\t'.join([chrom, str(s), str(e)] + ['nan' if v is None else _fmt(v) for v in values]) + '\n')
                 n += 1
+                if progress and n % 500 == 0:
+                    progress(n / total)
     finally:
         for bw in handles:
             bw.close()
     return n
 
 
-def bins(bigwigs: List[str], labels: List[str], size: int, npz: str, raw: Optional[str] = None) -> int:
+def bins(bigwigs: List[str], labels: List[str], size: int, npz: str, raw: Optional[str] = None,
+         progress: Progress = None) -> int:
     """The genome in bins of ``size``, on the chromosomes every track has; each track's mean per bin."""
     import numpy as np
     import pyBigWig
@@ -99,9 +106,16 @@ def bins(bigwigs: List[str], labels: List[str], size: int, npz: str, raw: Option
         if not chroms:
             raise SystemExit('The tracks have no chromosome name in common.')
         columns, rows = [[] for _ in handles], []
+        lengths = {c: min(s[c] for s in sizes) for c in chroms}
+        total, done = (sum(lengths.values()) * len(handles)) or 1, 0
         for chrom in chroms:
-            length = min(s[chrom] for s in sizes)
-            per_track = [bin_means(bw, chrom, 0, length, size) for bw in handles]
+            length = lengths[chrom]
+            per_track = []
+            for bw in handles:
+                per_track.append(bin_means(bw, chrom, 0, length, size))
+                done += length
+                if progress:
+                    progress(done / total)
             for col, values in zip(columns, per_track):
                 col.extend(values)
             rows += [(chrom, s, min(s + size, length)) for s in range(0, length, size)]
@@ -118,7 +132,7 @@ def bins(bigwigs: List[str], labels: List[str], size: int, npz: str, raw: Option
     return len(rows)
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: Optional[List[str]] = None, progress: Progress = None) -> None:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0].strip())
     sub = p.add_subparsers(dest='what', required=True)
     f = sub.add_parser('features', help='each track’s mean over each line of a BED file')
@@ -136,9 +150,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     if len(a.labels) != len(a.bigwigs):
         p.error('give one label per BigWig file')
     if a.what == 'features':
-        features(a.bed, a.bigwigs, a.labels, a.out)
+        features(a.bed, a.bigwigs, a.labels, a.out, progress)
     else:
-        bins(a.bigwigs, a.labels, a.binSize, a.out, a.outRawCounts)
+        bins(a.bigwigs, a.labels, a.binSize, a.out, a.outRawCounts, progress)
 
 
 if __name__ == '__main__':

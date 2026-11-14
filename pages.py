@@ -28,6 +28,7 @@ def _page(title: str, sub: str, static: str, prefix: str, body: str) -> str:
     <a class="tt-home" href="/" title="All of Trellis Tools"><img src="{static}/trellis/trellis.svg" alt=""><span>Trellis Tools</span></a>
     <a class="tt-module" href="{prefix}/"><img src="{static}/trellis/genome.svg" alt="">Genome Browser</a><span class="tt-sub">{sub}</span>
     <nav class="tt-links">
+      <a href="{prefix}/jobs">My jobs</a>
       <a href="{prefix}/help">Help</a>
       <a href="{prefix}/about">About</a>
     </nav>

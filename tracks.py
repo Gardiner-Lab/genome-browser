@@ -218,8 +218,9 @@ def register_tracks(app: Flask) -> None:
                     (member,)).fetchone()[0]
                 if busy >= 3:
                     return jsonify({'error': 'You have three jobs waiting already: let them finish first.'}), 429
+                # The estimate is kept so My jobs on the dashboard can show how far along it should be.
                 params = {'name': name, 'sequences': body.get('sequences') or '',
-                          'owner_lab': owner_lab, **source}
+                          'owner_lab': owner_lab, 'estimate_seconds': round(estimate), **source}
                 job_id = analysis.enqueue(conn, genome['id'], member, owner_lab, 'motif', params)
                 ahead = conn.execute("SELECT count(*) FROM analysis_jobs WHERE state IN ('queued', 'running') "
                                      'AND id <> ?', (job_id,)).fetchone()[0]
