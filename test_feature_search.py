@@ -43,3 +43,19 @@ def test_genes_come_before_their_parts_and_old_indexes_get_the_name_index(tmp_pa
 def test_the_browser_asks_this_server_not_igv_org():
     js = (Path(__file__).with_name('static') / 'browser.js').read_text(encoding='utf-8')
     assert "/feature-search?name=$FEATURE$" in js and 'search: {' in js
+
+
+def test_a_gene_is_found_by_its_symbol_alias_or_full_name(tmp_path):
+    gff = tmp_path / 'b.gff'
+    gff.write_text('##gff-version 3\n'
+                   'Chr5\tA\tgene\t3173382\t3179448\t.\t-\t.\tID=AT5G10140;Name=AT5G10140;'
+                   'full_name=FLOWERING LOCUS C;symbol=FLC;Alias=FLF,AGL25\n'
+                   'Chr5\tA\tmRNA\t3173382\t3179448\t.\t-\t.\tID=AT5G10140.1;Name=AT5G10140.1;Parent=AT5G10140;symbol=FLC\n'
+                   'Chr1\tA\tgene\t100\t200\t.\t+\t.\tID=AT1G00001;Name=AT1G00001;symbol=AT1G00001\n')
+    parse = regions.feature_parser('gff')
+    for query in ('FLC', 'flc', 'FLOWERING LOCUS C', 'FLF', 'agl25', 'AT5G10140'):
+        found = feature_index.named(gff, parse, query)
+        assert [(f[0], f[1], f[2], f[3], f[4]) for f in found] == [('Chr5', 3173381, 3179448, 'AT5G10140', 'gene')], query
+    assert feature_index.named(gff, parse, 'AT1G00001') == [('Chr1', 99, 200, 'AT1G00001', 'gene', 1)]   # once
+    assert feature_index.named(gff, parse, 'FLOWERING') == []
+    feature_index.prepare_search(gff, parse, 'gff')         # again: already made, nothing to do

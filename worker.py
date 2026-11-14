@@ -320,6 +320,19 @@ def main() -> None:
                       f"{found['methylation']} methylation, {found['failed']} could not be read.", flush=True)
         except Exception as exc:  # never stop the worker over it; each track is checked when first listed
             print(f'[genome-worker] could not check existing tracks: {exc}', flush=True)
+        # The search box's names and symbols for each gene annotation, so the first search is quick
+        # (feature_index.prepare_search; otherwise the first search makes them).
+        try:
+            import feature_index
+            import regions
+            for row in conn.execute("SELECT name, type, file_path FROM tracks WHERE type IN ('gff', 'bed') "
+                                    "AND track_status = 'ready' AND file_path IS NOT NULL").fetchall():
+                try:
+                    feature_index.prepare_search(row['file_path'], regions.feature_parser(row['type']), row['type'])
+                except Exception as exc:
+                    print(f"[genome-worker] could not prepare searching {row['name']}: {exc}", flush=True)
+        except Exception as exc:  # never stop the worker over it
+            print(f'[genome-worker] could not prepare the search box: {exc}', flush=True)
         # A BLAST database for checking primers against each genome that has none yet, made in turn
         # when nothing else is waiting (primer_check.py).
         try:

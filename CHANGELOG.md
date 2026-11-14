@@ -9,12 +9,16 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-11-15
+
 ### Fixed
 - **A gene typed in the search box was not found** when it is in the genome's annotation but not in igv.org's
   copy of the assembly (AT3G01835, an Araport11 long non-coding RNA, on TAIR10). igv.js looked names up at
   igv.org; the search box now asks this server, which finds the name in the genome's own gene annotation and BED
-  tracks that the member may see (genes first), so what the lab searches for no longer leaves the suite. Each
-  feature index gets a name index on the first search (under 2 s for Araport11).
+  tracks that the member may see (genes first), so what the lab searches for no longer leaves the suite.
+- **Genes can be searched by symbol, alias or full name** as well as by their own name: Araport11's `symbol=`
+  (FLC, DRM2) and `full_name=` (FLOWERING LOCUS C), GFF3's `Alias=`, and `gene_name=`. Each annotation's index
+  gets a name index and a table of these on the worker's start (3 s for Araport11), or on the first search.
 
 ## [0.15.1] - 2026-11-15
 

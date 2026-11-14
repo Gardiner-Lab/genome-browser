@@ -353,7 +353,8 @@ def register_genomes(app: Flask) -> None:
     @app.route('/api/genomes/<genome_id>/feature-search')
     def feature_search(genome_id):
         """
-        A feature by its name, from the genome's own gene annotation and BED tracks that the member may see:
+        A feature by its name (or a gene's symbol, alias or full name), from the genome's own gene annotation
+        and BED tracks that the member may see:
         what the browser's search box asks when what is typed is not a position. igv.js would otherwise ask
         igv.org, which knows only the genes of the assembly it names (TAIR10's, not Araport11's), and should
         not be told what the lab looks for. A list, the best first: {chromosome, start (0-based), end, name,
@@ -379,7 +380,7 @@ def register_genomes(app: Flask) -> None:
         found = []
         for row in rows:
             for chrom, start, end, fname, ftype, _ in feature_index.named(
-                    row['file_path'], regions.feature_parser(row['type']), name):
+                    row['file_path'], regions.feature_parser(row['type']), name, track_type=row['type']):
                 found.append({'chromosome': chrom, 'start': start, 'end': end, 'name': fname, 'type': ftype,
                               'track': row['name']})
         found.sort(key=lambda f: (f['type'] != 'gene', -(f['end'] - f['start'])))

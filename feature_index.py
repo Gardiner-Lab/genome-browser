@@ -152,29 +152,106 @@ def overlapping(file_path, parse, chrom: str, start: int,
             for c, s, e, n, _, _ in rows]
 
 
-def named(file_path, parse, name: str, limit: int = 20) -> List[Feature]:
+# A GFF feature's other names, as the search box may be given them: Araport11's symbol= (FLC) and
+# full_name= (FLOWERING LOCUS C), GFF3's Alias=, and gene_name= from Ensembl-style files.
+_ALIAS_KEYS = ('symbol', 'Alias', 'gene_name', 'full_name')
+
+
+def _aliases(file_path) -> Iterable[Feature]:
     """
-    The features whose name is ``name``, ignoring case: a gene typed in the search box (its transcripts
-    and exons are named apart, ``AT3G01835.1``, ``AT3G01835:exon:1``). Genes first, then the longest.
-    An unreadable file finds nothing.
+    Each top-level GFF feature's other names, as (alias, chrom, start, end, name, type, strand): a gene
+    or a transposon, not its transcripts and exons, which share them. 0-based starts, as the index.
+    """
+    from urllib.parse import unquote
+    with open(file_path, 'r', encoding='utf-8', errors='replace') as handle:
+        for line in handle:
+            if line.startswith('#'):
+                continue
+            f = line.rstrip('\r\n').split('\t')
+            if len(f) < 9 or 'Parent=' in f[8]:
+                continue
+            attrs = dict(kv.split('=', 1) for kv in f[8].split(';') if '=' in kv)
+            name = unquote(attrs.get('Name') or attrs.get('ID') or '').strip()
+            found = set()
+            for key in _ALIAS_KEYS:
+                value = attrs.get(key)
+                if not value:
+                    continue
+                for part in ([value] if key == 'full_name' else value.split(',')):
+                    alias = unquote(part).strip()
+                    if alias and alias.casefold() != name.casefold():
+                        found.add(alias)
+            if not found:
+                continue
+            try:
+                start, end = int(f[3]) - 1, int(f[4])
+            except ValueError:
+                continue
+            strand = 1 if f[6] == '+' else -1 if f[6] == '-' else 0
+            for alias in found:
+                yield (alias, f[0], start, end, name, f[2], strand)
+
+
+def prepare_search(file_path, parse, track_type: str) -> None:
+    """
+    Make a feature file's index ready for the search box: a name index, and for a GFF file a table of
+    its features' other names (aliases). Built once, on the first search or when the worker starts
+    (seconds for Araport11); an index rebuilt from a newer file gets them again.
+    """
+    idx = ensure(file_path, parse)
+    conn = sqlite3.connect(str(idx), timeout=60)
+    try:
+        conn.execute(_BY_NAME)
+        conn.commit()
+        if track_type != 'gff':
+            return
+        conn.execute('BEGIN IMMEDIATE')       # one builder at a time; the others find it made
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'aliases'").fetchone():
+            conn.rollback()
+            return
+        conn.execute('CREATE TABLE aliases (alias TEXT NOT NULL, chrom TEXT NOT NULL, start INTEGER NOT NULL, '
+                     '"end" INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, strand INTEGER NOT NULL)')
+        batch = []
+        for row in _aliases(file_path):
+            batch.append(row)
+            if len(batch) >= _BATCH:
+                conn.executemany('INSERT INTO aliases VALUES (?, ?, ?, ?, ?, ?, ?)', batch)
+                batch.clear()
+        if batch:
+            conn.executemany('INSERT INTO aliases VALUES (?, ?, ?, ?, ?, ?, ?)', batch)
+        conn.execute('CREATE INDEX aliases_by_alias ON aliases (alias COLLATE NOCASE)')
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def named(file_path, parse, name: str, limit: int = 20, track_type: str = 'gff') -> List[Feature]:
+    """
+    The features called ``name``, ignoring case: by their own name (a gene's AGI code; its transcripts
+    and exons are named apart, ``AT3G01835.1``), or, in a GFF file, by a symbol, alias or full name
+    (``FLC``, ``FLOWERING LOCUS C``). Genes first, then the longest. An unreadable file finds nothing.
     """
     try:
-        idx = ensure(file_path, parse)
-        conn = sqlite3.connect(str(idx), timeout=30)
         try:
-            try:
-                conn.execute(_BY_NAME)
-                conn.commit()
-            except sqlite3.Error:
-                pass                      # read-only, or busy: the search scans instead
+            prepare_search(file_path, parse, track_type)
+        except sqlite3.Error:
+            pass                          # read-only, or busy: the search scans the names instead
+        conn = sqlite3.connect(f'file:{index_path(file_path)}?mode=ro', uri=True)
+        try:
             rows = conn.execute(
                 'SELECT chrom, start, "end", name, type, strand FROM features WHERE name = ? COLLATE NOCASE '
                 "ORDER BY type <> 'gene', \"end\" - start DESC LIMIT ?", (name, limit)).fetchall()
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'aliases'").fetchone():
+                rows += conn.execute(
+                    'SELECT chrom, start, "end", name, type, strand FROM aliases WHERE alias = ? COLLATE NOCASE '
+                    "ORDER BY type <> 'gene', \"end\" - start DESC LIMIT ?", (name, limit)).fetchall()
         finally:
             conn.close()
     except (OSError, sqlite3.Error):
         return []
-    return [tuple(r) for r in rows]
+    out = list(dict.fromkeys(tuple(r) for r in rows))
+    out.sort(key=lambda r: (r[4] != 'gene', -(r[2] - r[1])))
+    return out[:limit]
 
 
 def details(file_path, parse, chrom: str, start: int, end: int,
