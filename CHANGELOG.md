@@ -9,6 +9,27 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-11-14
+
+### Fixed
+Where a coverage track has no reads it has no data at all, and several analyses averaged over the
+bases that do have data instead of counting the rest as zero. A gene with 10 over half its length
+read 10, not 5. Each now takes a region's mean as the signal summed over it divided by its length.
+Results made before this release are unchanged; run them again for the corrected numbers.
+- **Replicate check (correlation and PCA): correlations no longer read too high.** A bin where only
+  one track had reads was missing for the other, and `plotCorrelation` dropped every such bin — the
+  very bins where replicates disagree. They are now kept, as zero for the track without reads.
+- **Signal per feature (table):** each value is the feature's true mean, so the difference between
+  two tracks is right too, and a feature without reads reads 0 rather than being left blank.
+- **Bar chart of a selection**, and the Python script it downloads with: each bar is the true mean.
+- **Circos rings:** a bin with reads over only part of it is no longer drawn as high as one covered
+  throughout, and a bin without reads is drawn at zero rather than left out.
+
+### Changed
+- The table and the replicate check measure the tracks with `bigwig_means.py` instead of deepTools'
+  `multiBigwigSummary`, which has no way to count missing data as zero; deepTools still draws the
+  correlation and the PCA. Their recipes include the script, so `run.sh` makes the same numbers.
+
 ## [0.12.3] - 2026-11-14
 
 ### Fixed
