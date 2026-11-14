@@ -7,6 +7,10 @@ a gene with 10 over half its length reads 10, not 5, and a stretch with no reads
 which ``plotCorrelation`` then drops, so the bins where replicates disagree most leave the
 correlation. Here a region's mean is the signal summed over it divided by its length.
 
+Always read exactly (``exact=True``), never from the file's zoom levels: on real tracks the zoom-level
+'sum' came back 0 for every bin, and the zoom-level 'mean' was some 10% off; exact costs about a
+second per chromosome.
+
 This file is also the script the recipes carry (it needs only pyBigWig, and numpy for ``bins``):
 
     python3 bigwig_means.py features regions.bed A.bw B.bw --labels A B -o raw.tab
@@ -45,11 +49,11 @@ def bin_means(bw, chrom: str, start: int, end: int, size: int) -> List[float]:
     s = start
     while end - s >= size:
         n = min((end - s) // size, _CHUNK_BINS)
-        sums = bw.stats(chrom, s, s + n * size, type='sum', nBins=n) or [None] * n
+        sums = bw.stats(chrom, s, s + n * size, type='sum', nBins=n, exact=True) or [None] * n
         out += [(v or 0.0) / size for v in sums]
         s += n * size
     if s < end:
-        total = (bw.stats(chrom, s, end, type='sum') or [None])[0]
+        total = (bw.stats(chrom, s, end, type='sum', exact=True) or [None])[0]
         out.append((total or 0.0) / (end - s))
     return out
 

@@ -42,6 +42,30 @@ def test_bin_means_with_a_shorter_last_bin(sparse):
         bw.close()
 
 
+def test_bin_means_match_every_base_on_a_track_with_zoom_levels(tmp_path):
+    # Big enough for real zoom levels, whose 'sum' read 0 for every bin on an uploaded track.
+    path = tmp_path / 'dense.bw'
+    rng = np.random.default_rng(3)
+    bw = pyBigWig.open(str(path), 'w')
+    bw.addHeader([('chr1', 2_000_000)], maxZooms=10)
+    starts = np.arange(0, 2_000_000, 50)
+    keep = rng.random(len(starts)) < 0.7                       # some stretches without data
+    s = starts[keep]
+    bw.addEntries(['chr1'] * len(s), s.tolist(), ends=(s + 50).tolist(),
+                  values=rng.gamma(0.5, 40, len(s)).tolist())
+    bw.close()
+    bw = pyBigWig.open(str(path))
+    try:
+        assert bw.header()['nLevels'] > 0
+        size = 25_000
+        truth = np.nan_to_num(np.array(bw.values('chr1', 0, 2_000_000))).reshape(-1, size).mean(axis=1)
+        assert bigwig_means.bin_means(bw, 'chr1', 0, 2_000_000, size) == pytest.approx(truth.tolist(), rel=1e-6)
+        assert bigwig_means.mean(bw, 'chr1', 1234, 98_765) == pytest.approx(
+            float(np.nan_to_num(np.array(bw.values('chr1', 1234, 98_765))).mean()), rel=1e-6)
+    finally:
+        bw.close()
+
+
 def test_features_table(sparse, tmp_path):
     bed = tmp_path / 'regions.bed'
     bed.write_text('chr1\t0\t4000\tGENE1\t0\t+\nchr1\t20000\t24000\tEMPTY\t0\t-\nchrX\t0\t10\tELSEWHERE\t0\t+\n')

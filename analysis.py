@@ -190,7 +190,7 @@ def _run(args: List[str], cwd: Path, what: str) -> None:
 # --- the analyses ----------------------------------------------------------------------
 
 def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict], work: Path) -> dict:
-    sets, labels = [], []
+    sets, names, found = [], [], []
     for i, rs in enumerate(params.get('regions') or []):
         rt = region_tracks.get(rs.get('track'))
         if rt is None:
@@ -199,7 +199,8 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         n = region_bed(rt['file_path'], rt['type'], rs.get('type') or None, rs.get('names'), bed)
         if n:
             sets.append(bed)
-            labels.append(f"{rs.get('type') or rt['name']} ({n:,})")
+            names.append(rs.get('type') or rt['name'])
+            found.append(n)
     if not sets:
         raise AnalysisError('None of the chosen features were found: choose another type, or check the names.')
     mode = params.get('mode') if params.get('mode') in ('scale', 'start', 'end') else 'scale'
@@ -218,6 +219,17 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
     else:
         args += ['--referencePoint', 'TSS' if mode == 'start' else 'TES']
     _run(args, work, 'Computing the profile')
+    # Label each set with the features actually drawn: computeMatrix leaves out those with no signal
+    # at all (--skipZeros) and those shorter than a bin, so the count found would overstate it.
+    drawn = _features_drawn(work / 'matrix.gz')
+    if len(drawn) != len(sets):
+        raise AnalysisError('None of the features in one of the sets has any signal here: '
+                            'choose another type, or check the names.')
+    labels, left_out = [], {}
+    for name, n, kept in zip(names, found, drawn):
+        labels.append(f'{name} ({kept:,})' if kept == n else f'{name} ({kept:,} of {n:,})')
+        if kept < n:
+            left_out[name] = n - kept
     # Region-set labels as chosen (computeMatrix names them after the files).
     title = (params.get('title') or '').strip()[:100]
     start_label, end_label = ('start', 'end')
@@ -238,7 +250,19 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
             heat_args += ['--kmeans', str(k)]
         _run(heat_args, work, 'Drawing the heatmap')
         files.insert(1, 'heatmap.png')
-    return {'files': files, 'regions': labels}
+    out = {'files': files, 'regions': labels}
+    if left_out:
+        out['left_out'] = left_out
+    return out
+
+
+def _features_drawn(matrix: Path) -> List[int]:
+    """How many features of each set computeMatrix kept, from its header's group boundaries."""
+    import gzip
+    with gzip.open(matrix, 'rt', encoding='utf-8') as fh:
+        header = fh.readline()
+    bounds = json.loads(header[1:])['group_boundaries'] if header.startswith('@') else [0]
+    return [b - a for a, b in zip(bounds, bounds[1:])]
 
 
 def run_compare(params: dict, a: dict, b: dict, work: Path) -> dict:

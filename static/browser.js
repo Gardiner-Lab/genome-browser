@@ -2177,7 +2177,9 @@
                 filename: base, selection: null, title: heading, downloads: downloads,
                 recipe: { kind: 'deeptools', jobId: job.id },
                 about: job.kind === 'profile'
-                    ? 'Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.'
+                    ? 'Drawn by deepTools from the tracks chosen, over ' + (r.regions || []).join(', ') + '.' +
+                      (r.left_out ? ' Left out: ' + Object.keys(r.left_out).map(function (k) { return r.left_out[k].toLocaleString() + ' ' + k; }).join(', ') +
+                        ', with no signal at all within the window or shorter than one bin.' : '')
                     : 'Drawn by deepTools: correlation of the tracks along the genome, and their principal components.',
                 tracks: checkedValues(el('analyse-tracks')).map(function (id) {
                     var t = state.tracks.find(function (x) { return x.id === id; });

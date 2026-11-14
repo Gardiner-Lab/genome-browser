@@ -136,12 +136,34 @@ def test_profile_counts_missing_coverage_as_zero(monkeypatch, tmp_path):
     runs = []
     monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 5)
     monkeypatch.setattr(analysis, '_run', lambda args, cwd, what: runs.append(args))
+    monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
     analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
                          [{'file_path': 'wt.bw', 'name': 'WT'}], {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}},
                          tmp_path)
     compute = next(a for a in runs if a[0] == 'computeMatrix')
     assert '--missingDataAsZero' in compute
     assert [a[0] for a in runs] == ['computeMatrix', 'plotProfile', 'plotHeatmap']
+
+
+def test_profile_label_counts_the_features_drawn(monkeypatch, tmp_path):
+    # computeMatrix leaves out features without signal and shorter than a bin: say so, not the count found.
+    import gzip
+    runs = []
+    monkeypatch.setattr(analysis, 'region_bed', lambda *a, **k: 40)
+
+    def fake_run(args, cwd, what):
+        runs.append(args)
+        if args[0] == 'computeMatrix':
+            with gzip.open(tmp_path / 'matrix.gz', 'wt') as fh:
+                fh.write('@' + json.dumps({'group_boundaries': [0, 31, 71]}) + '\n')
+    monkeypatch.setattr(analysis, '_run', fake_run)
+    out = analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}, {'track': 'g', 'type': 'transposable_element'}]},
+                               [{'file_path': 'wt.bw', 'name': 'WT'}],
+                               {'g': {'file_path': 'g.gff', 'type': 'gff', 'name': 'Genes'}}, tmp_path)
+    assert out['regions'] == ['gene (31 of 40)', 'transposable_element (40)']
+    assert out['left_out'] == {'gene': 9}
+    plotted = next(a for a in runs if a[0] == 'plotProfile')
+    assert plotted[plotted.index('--regionsLabel') + 1:][:2] == ['gene (31 of 40)', 'transposable_element (40)']
 
 
 @pytest.mark.skipif(not HAS_DEEPTOOLS, reason='deepTools is not installed here (it is in the image)')
