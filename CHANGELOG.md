@@ -9,6 +9,8 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-14
+
 ### Fixed
 - **A methylation track's heatmap was all grey.** Nearly every feature's row has steps with no
   cytosine measured (a quarter of all steps on the GEO CG tracks), and plotHeatmap paints any pixel
