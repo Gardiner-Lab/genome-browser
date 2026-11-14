@@ -9,6 +9,17 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-11-14
+
+### Fixed
+- **Heatmaps from "Profile around features, and heatmap" are no longer blacked out.** A coverage
+  track has no entries where nothing was read, and `computeMatrix` left those bins as missing
+  (NaN), which `plotHeatmap` paints black: on a sparse track most of the heatmap was black. They
+  now count as zero coverage (`--missingDataAsZero`), as they are.
+- **The profile above it reads true as well.** The missing bins were left out of the mean instead of
+  counted as zero, so the profile read higher than the signal, most of all in the flanks. Profiles
+  and heatmaps made before this release are unchanged; run them again to redraw them.
+
 ## [0.12.2] - 2026-11-13
 
 ### Fixed
