@@ -23,6 +23,7 @@ This file is also the script the recipes carry (it needs only pyBigWig, and nump
     python3 bigwig_means.py features regions.bed RNA.bw CG.level.bw --labels RNA CG --as coverage level -o raw.tab
     python3 bigwig_means.py unsigned CG.bw -o CG.level.bw       # minus-strand cytosines' sign dropped
     python3 bigwig_means.py fill matrix.gz --samples 1 -o matrix.gz   # computeMatrix's NaN as 0, for sample 1
+    python3 bigwig_means.py interpolate matrix.gz --samples 2 -o heatmap-matrix.gz   # for the heatmap only
 
 Both write the tab-separated table ``multiBigwigSummary --outRawCounts`` does (0-based starts),
 and ``bins`` the .npz it does, which ``plotCorrelation`` and ``plotPCA`` read.
@@ -214,6 +215,41 @@ def fill(matrix: str, samples: List[int], out: str) -> None:
         fh.write(lines[0] + '\n' + ''.join(line + '\n' for line in body))
 
 
+def interpolate(matrix: str, samples: List[int], out: str) -> None:
+    """
+    For drawing a heatmap of a methylation track: in each feature's row, a step with no cytosine
+    measured (NaN) takes its value from the nearest measured steps on either side (linearly between
+    them; the nearest one past the last). A row with nothing measured stays NaN.
+
+    Without it a sparse track's heatmap is all one colour: nearly every row has some empty steps, and
+    plotHeatmap, squeezing thousands of rows into each pixel, paints any pixel that touches one as
+    missing. The mean profile is drawn from the matrix as measured, never from this.
+    """
+    import gzip
+    import json
+    import numpy as np
+    with gzip.open(matrix, 'rt', encoding='utf-8') as fh:
+        lines = fh.read().split('\n')
+    bounds = json.loads(lines[0][1:])['sample_boundaries']
+    spans = [(bounds[i - 1], bounds[i]) for i in samples]
+    body = []
+    for line in lines[1:]:
+        if not line:
+            continue
+        f = line.split('\t')
+        values = f[6:]
+        for a, b in spans:
+            seg = np.array([float(v) if v not in ('', 'nan', 'NaN') else np.nan for v in values[a:b]])
+            ok = ~np.isnan(seg)
+            if ok.any() and not ok.all():
+                at = np.arange(len(seg))
+                seg[~ok] = np.interp(at[~ok], at[ok], seg[ok])
+                values[a:b] = [f'{v:.6g}' for v in seg]
+        body.append('\t'.join(f[:6] + values))
+    with gzip.open(out, 'wt', encoding='utf-8') as fh:
+        fh.write(lines[0] + '\n' + ''.join(line + '\n' for line in body))
+
+
 def main(argv: Optional[List[str]] = None, progress: Progress = None) -> None:
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0].strip())
     sub = p.add_subparsers(dest='what', required=True)
@@ -239,7 +275,14 @@ def main(argv: Optional[List[str]] = None, progress: Progress = None) -> None:
     m.add_argument('matrix')
     m.add_argument('--samples', nargs='+', type=int, required=True, help='1 for the first -S file')
     m.add_argument('-o', '--out', required=True)
+    i = sub.add_parser('interpolate', help='for a heatmap: empty steps of some samples filled from their neighbours')
+    i.add_argument('matrix')
+    i.add_argument('--samples', nargs='+', type=int, required=True, help='1 for the first -S file')
+    i.add_argument('-o', '--out', required=True)
     a = p.parse_args(argv)
+    if a.what == 'interpolate':
+        interpolate(a.matrix, a.samples, a.out)
+        return
     if a.what == 'unsigned':
         unsigned(a.bigwig, a.out)
         return

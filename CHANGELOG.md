@@ -7,6 +7,17 @@ until the suite is updated to use it.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A methylation track's heatmap was all grey.** Nearly every feature's row has steps with no
+  cytosine measured (a quarter of all steps on the GEO CG tracks), and plotHeatmap paints any pixel
+  that holds one as missing. For the heatmap only, each empty step now takes its value from the
+  measured steps beside it in the same feature (`bigwig_means.py interpolate`); the heatmap leaves
+  out its own profile, so the profile shown, and the matrix download, are as measured. The figure's
+  caption says so. With coverage tracks whose gaps are left out (as chosen), each heatmap pixel is
+  one feature's value, so gaps no longer grey out the rest.
+
 ## [0.14.0] - 2026-11-14
 
 ## [Unreleased]

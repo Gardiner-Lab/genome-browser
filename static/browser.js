@@ -2224,6 +2224,11 @@
             parts.push(((r.methylation || []).length ? 'For the coverage tracks, stretches' : 'Stretches') +
                 (zero ? ' without data count as zero.' : ' without data are left out of the mean, and black in the heatmap.'));
         }
+        if ((r.heatmap_filled || []).length) {
+            parts.push('In the heatmap, a step of a methylation track with no cytosine measured takes its value from the ' +
+                'measured steps beside it in the same row, so each feature reads as a whole; the profile and the ' +
+                'matrix download are as measured.');
+        }
         if (r.off_end && r.off_end.count) {
             var shown = r.off_end.features.slice(0, 6).join(', ') + (r.off_end.count > 6 ? ', …' : '');
             parts.push('Note: the window of ' + count(r.off_end.count) + (r.off_end.count === 1 ? ' feature runs' : ' features run') +

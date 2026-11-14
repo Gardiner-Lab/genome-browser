@@ -358,18 +358,34 @@ def run_profile(params: dict, tracks: List[dict], region_tracks: Dict[str, dict]
         colormap = str(params.get('colormap') or 'viridis')
         if colormap not in COLORMAPS:
             colormap = 'viridis'
-        heat_args = ['plotHeatmap', '-m', 'matrix.gz', '-o', 'heatmap.png', '--dpi', '110', *common,
+        heat_matrix = 'matrix.gz'
+        if any(levels):
+            # A methylation track has steps with no cytosine in nearly every row, and plotHeatmap paints a
+            # pixel holding any of them as missing: the whole heatmap came out grey. For the heatmap only,
+            # each empty step takes its value from the measured steps beside it in the same row; the profile
+            # is drawn from the matrix as measured, so the heatmap leaves out its own profile on top.
+            heat_matrix = 'heatmap-matrix.gz'
+            _measure(['interpolate', str(work / 'matrix.gz'), '--samples',
+                      *[str(i + 1) for i, lv in enumerate(levels) if lv], '-o', str(work / heat_matrix)],
+                     'Drawing the heatmap', span=(0.9, 0.9))
+        heat_args = ['plotHeatmap', '-m', heat_matrix, '-o', 'heatmap.png', '--dpi', '110', *common,
                      '--colorMap', colormap, '--heatmapHeight', '18', '--plotTitle', title or 'Signal per feature']
         if k >= 2:
             heat_args += ['--kmeans', str(k)]
         if any(levels):
-            # Steps with no cytosine measured: light grey, not deepTools' black, which reads as a
-            # value at the bottom of the scale.
-            heat_args += ['--missingDataColor', '0.85']
+            # A row with no cytosine measured anywhere: light grey, not deepTools' black, which reads as
+            # a value at the bottom of the scale.
+            heat_args += ['--missingDataColor', '0.85', '--whatToShow', 'heatmap and colorbar']
+        if not missing_as_zero and levels.count(False):
+            # Coverage left with gaps (as chosen): each pixel one feature's value, not a blend that any
+            # gap turns to the missing colour.
+            heat_args += ['--interpolationMethod', 'nearest']
         _run(heat_args, work, 'Drawing the heatmap', at=0.9)
         files.insert(1, 'heatmap.png')
     out = _measured_as(tracks, {'files': files, 'regions': labels, 'skip_zeros': skip_zeros,
                                 'missing_as_zero': missing_as_zero, 'coverage_tracks': levels.count(False)})
+    if params.get('heatmap') and any(levels):
+        out['heatmap_filled'] = [t['name'] for t in tracks if _is_level(t)]
     if left_out:
         out['left_out'] = left_out
     # Features whose window runs past a chromosome end have bins with no genome under them: those count

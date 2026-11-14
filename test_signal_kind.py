@@ -103,6 +103,22 @@ def test_fill_sets_missing_values_of_some_samples_to_zero(tmp_path):
     assert lines[1] == 'Chr1\t0\t10\tG\t.\t+\t0\t1\tnan\t2'
 
 
+def test_interpolate_fills_each_rows_empty_steps_from_its_neighbours(tmp_path):
+    header = {'sample_boundaries': [0, 4, 9], 'group_boundaries': [0, 2]}
+    m = tmp_path / 'matrix.gz'
+    with gzip.open(m, 'wt') as fh:
+        fh.write('@' + json.dumps(header) + '\n')
+        fh.write('Chr1\t0\t10\tG\t.\t+\tnan\t1\tnan\t2\tnan\t0.2\tnan\tnan\t0.8\n')
+        fh.write('Chr1\t20\t30\tH\t.\t-\t1\t1\t1\t1\tnan\tnan\tnan\tnan\tnan\n')
+    bigwig_means.main(['interpolate', str(m), '--samples', '2', '-o', str(tmp_path / 'heat.gz')])
+    with gzip.open(tmp_path / 'heat.gz', 'rt') as fh:
+        lines = fh.read().splitlines()
+    assert json.loads(lines[0][1:]) == header
+    # Sample 1 (coverage) untouched; sample 2's gaps from its neighbours, the first one from the nearest.
+    assert lines[1].split('\t')[6:] == ['nan', '1', 'nan', '2', '0.2', '0.2', '0.4', '0.6', '0.8']
+    assert lines[2].split('\t')[6:] == ['1', '1', '1', '1', 'nan', 'nan', 'nan', 'nan', 'nan']   # nothing measured
+
+
 def _add_cg(world, name='CG', signal=None):
     path = _cg_track(world['root'] / 'tracks' / f'{name}.bw')
     track = uuid.uuid4().hex
@@ -180,6 +196,14 @@ def test_every_analysis_measures_methylation_as_a_level(world, tmp_path):
     body = cgm[:, 10:20]                                 # the scaled gene bodies
     assert np.nanmean(body) == pytest.approx(0.8)
     assert done['profile']['result']['coverage_tracks'] == 1
+    assert done['profile']['result']['heatmap_filled'] == ['CG']
+    heat = analysis.job_dir(w['root'], done['profile']['id']) / 'heatmap-matrix.gz'
+    hl = gzip.decompress(heat.read_bytes()).decode().splitlines()
+    hm = np.array([[float(v) for v in line.split('\t')[6:]] for line in hl[1:]])
+    filled = hm[:, bounds[1]:bounds[2]]
+    partly = ~np.isnan(cgm).all(axis=1)
+    assert not np.isnan(filled[partly]).any()
+    assert np.array_equal(filled[~np.isnan(cgm)], cgm[~np.isnan(cgm)])     # measured steps unchanged
 
     # The recipe makes the copy without signs and measures from it, by download names.
     recipe = w['call']('GET', f"/api/analyses/{done['genes']['id']}/recipe").get_json()
@@ -215,6 +239,8 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
     monkeypatch.setattr(analysis, '_run', lambda args, cwd, what, **step: runs.append(args))
     monkeypatch.setattr(analysis, '_features_drawn', lambda matrix: [5])
     monkeypatch.setattr(analysis, '_off_chromosome_ends', lambda *a: [])
+    measured = []
+    monkeypatch.setattr(analysis, '_measure', lambda args, what, span=(0, 1): measured.append(args))
     analysis._RECIPE.clear()
     out = analysis.run_profile({'regions': [{'track': 'g', 'type': 'gene'}], 'heatmap': True},
                                [{'file_path': str(cg), 'name': 'CG', 'signal': 'methylation'}],
@@ -223,6 +249,11 @@ def test_a_profile_of_methylation_alone_leaves_missing_out(monkeypatch, tmp_path
     assert '--missingDataAsZero' not in compute and str(tmp_path / 'cg.level.bw') in compute
     heat = next(a for a in runs if a[0] == 'plotHeatmap')
     assert heat[heat.index('--missingDataColor') + 1] == '0.85'
+    # The heatmap is drawn from the matrix with each row's empty steps filled; the profile from the measured one.
+    assert heat[heat.index('-m') + 1] == 'heatmap-matrix.gz' and 'heatmap and colorbar' in heat
+    assert measured == [['interpolate', str(tmp_path / 'matrix.gz'), '--samples', '1', '-o',
+                         str(tmp_path / 'heatmap-matrix.gz')]]
+    assert out['heatmap_filled'] == ['CG']
     profile = next(a for a in runs if a[0] == 'plotProfile')
     assert profile[profile.index('--yAxisLabel') + 1] == 'methylation level'
     assert out['coverage_tracks'] == 0 and out['methylation'] == ['CG']
