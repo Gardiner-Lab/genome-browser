@@ -41,7 +41,8 @@ RUN chmod 755 /opt/bundled
 # Supply chain: the UCSC static binaries are verified against pinned SHA-256s.
 # They are fetched at build time from the canonical UCSC download host, per
 # architecture (linux.x86_64 for amd64, linux.aarch64 for arm64), and each is
-# checked against the SHA-256 pinned below (captured 2026-11-05). The
+# checked against the SHA-256 pinned below (captured 2026-11-05; amd64 wigToBigWig and
+# bedGraphToBigWig re-pinned 2026-11-21 for the kent v506 rebuild). The
 # ``sha256sum -c`` check fails the build on any mismatch, so a download cannot
 # be silently substituted. UCSC periodically rebuilds these binaries; if a
 # future build fails the check, re-fetch each for its architecture, confirm its
@@ -50,8 +51,8 @@ RUN chmod 755 /opt/bundled
 # TARGETARCH is provided by BuildKit (amd64 / arm64); the per-arch URL and
 # checksums are selected from it at build time.
 ARG TARGETARCH
-ARG UCSC_WIGTOBIGWIG_SHA256_amd64=5b9eccc4929b339be26bb69bce27de63070195cb0a431b410627c0bed8ab4f15
-ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_amd64=fe9ed8ed858731d22d9a3cefa99d192f51bff1496693599b2f8054fa350adb48
+ARG UCSC_WIGTOBIGWIG_SHA256_amd64=8f080232e9e09f44089723a2bb98ae5aa8d1a6fd87d1edb27d23dda925431271
+ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_amd64=94e09d9a5148077d362d87cc79495ee1a7bac63fcb3ea4260a931b747fd1e5de
 ARG UCSC_WIGTOBIGWIG_SHA256_arm64=fb347a6b90a7d4cbae4ac035a3c35c1700589e1a69f9553468d29754efbdacbf
 ARG UCSC_BEDGRAPHTOBIGWIG_SHA256_arm64=3c61e496f446d9965f4b945ca3c5ebfa1a669e920635fbb89a2b705c8a50f5d6
 
